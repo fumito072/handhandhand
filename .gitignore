@@ -1,0 +1,19 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# 大容量モデル重み (README/HANDOFF の取得手順を参照)
+choco_handover/models/*.pt
+choco_handover/models/*.ts
+choco_handover/models/*.task
+
+# 大容量の録画・PDF レポート
+choco_handover/recordings/
+*.pdf
+
+# ローカル生成物
+calib_targets/
+calib_captures/
+choco_handover/object_profiles.json.bak

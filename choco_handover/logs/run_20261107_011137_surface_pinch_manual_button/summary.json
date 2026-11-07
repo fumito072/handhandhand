@@ -1,0 +1,38 @@
+{
+  "run_id": "run_20261107_011137_surface_pinch_manual_button",
+  "run_dir": "/Users/hoshinafumito/.gemini/antigravity/scratch/unitree-r1/choco_handover/logs/run_20261107_011137_surface_pinch_manual_button",
+  "duration_s": 211.73,
+  "telemetry_samples": 527,
+  "events": [
+    {
+      "t_rel_s": 94.386,
+      "event": "touchdown",
+      "source": "fallback_bottom",
+      "z_surface_m": -0.0311,
+      "z_table_est_m": -0.0669
+    },
+    {
+      "t_rel_s": 120.503,
+      "event": "grasp_settled",
+      "grasp_res": "holding",
+      "verified": false,
+      "detail": "空振り検知（ストローク上限まで触覚反応なし）"
+    }
+  ],
+  "trigger_source": "manual_button",
+  "posture": "surface_pinch",
+  "side": "right",
+  "choco_label": "tirol_choco",
+  "choco_yaw_deg": 3.3,
+  "achieved_pinch_yaw_deg": 3.2,
+  "grasp_span_mm": 32.7,
+  "xy_source": "hd_plane_ray",
+  "touchdown_source": "fallback_bottom",
+  "z_table_est_m": -0.0669,
+  "z_surface_meas_m": -0.0311,
+  "grasp_verified": false,
+  "failure_mode": "empty_close_missed_object",
+  "dry_run": false,
+  "grasp_detail": "空振り検知（ストローク上限まで触覚反応なし）",
+  "final_phase": "RETURNED_NOT_GRASPED"
+}

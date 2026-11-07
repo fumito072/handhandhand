@@ -1,0 +1,23 @@
+{
+  "run_id": "run_20261107_013158_surface_pinch_manual_button",
+  "run_dir": "/Users/hoshinafumito/.gemini/antigravity/scratch/unitree-r1/choco_handover/logs/run_20261107_013158_surface_pinch_manual_button",
+  "duration_s": 28.65,
+  "telemetry_samples": 69,
+  "events": [],
+  "trigger_source": "manual_button",
+  "posture": "surface_pinch",
+  "side": "right",
+  "choco_label": "tirol_choco",
+  "choco_yaw_deg": 3.1,
+  "achieved_pinch_yaw_deg": 3.0,
+  "grasp_span_mm": 38.8,
+  "xy_source": "hd_plane_ray",
+  "touchdown_source": null,
+  "z_table_est_m": -0.0376,
+  "z_surface_meas_m": null,
+  "grasp_verified": false,
+  "failure_mode": "exception_RuntimeError",
+  "dry_run": false,
+  "error": "安全保護によりアームをソフトホールド停止しました (idle)",
+  "final_phase": "ERROR"
+}

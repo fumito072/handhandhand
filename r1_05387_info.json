@@ -1,0 +1,388 @@
+{
+  "identity_and_overall": {
+    "serial_number": "E39N4000Q6RC1M8S",
+    "machine_type": "1",
+    "software_version": "1.4.2.8",
+    "hardware_version": "1.0",
+    "hardware_version_raw": "10",
+    "protocol_generation": "V3"
+  },
+  "subsystems": {
+    "bms_firmware": "0.44",
+    "bms_fn": 120,
+    "bms_cells": 9,
+    "bms_soh_percent": 97,
+    "bms_cycles": 19,
+    "battery_soc_percent": 21,
+    "mainboard_state": [
+      32,
+      0,
+      0,
+      0,
+      0,
+      1
+    ],
+    "mode_machine": 1,
+    "dual_imu_present": true,
+    "rf_clicker_enabled": true,
+    "active_motor_count": 26,
+    "motors": [
+      {
+        "idx": 0,
+        "mode": 1,
+        "vol": 30.5,
+        "motorstate": 0,
+        "fw_rev": 5
+      },
+      {
+        "idx": 1,
+        "mode": 1,
+        "vol": 30.5,
+        "motorstate": 0,
+        "fw_rev": 5
+      },
+      {
+        "idx": 2,
+        "mode": 1,
+        "vol": 30.5,
+        "motorstate": 0,
+        "fw_rev": 5
+      },
+      {
+        "idx": 3,
+        "mode": 1,
+        "vol": 30.5,
+        "motorstate": 0,
+        "fw_rev": 5
+      },
+      {
+        "idx": 4,
+        "mode": 1,
+        "vol": 30.5,
+        "motorstate": 0,
+        "fw_rev": 5
+      },
+      {
+        "idx": 5,
+        "mode": 1,
+        "vol": 30.5,
+        "motorstate": 0,
+        "fw_rev": 5
+      },
+      {
+        "idx": 6,
+        "mode": 1,
+        "vol": 30.5,
+        "motorstate": 0,
+        "fw_rev": 5
+      },
+      {
+        "idx": 7,
+        "mode": 1,
+        "vol": 30.5,
+        "motorstate": 0,
+        "fw_rev": 5
+      },
+      {
+        "idx": 8,
+        "mode": 1,
+        "vol": 30.5,
+        "motorstate": 0,
+        "fw_rev": 5
+      },
+      {
+        "idx": 9,
+        "mode": 1,
+        "vol": 30.5,
+        "motorstate": 0,
+        "fw_rev": 5
+      },
+      {
+        "idx": 10,
+        "mode": 1,
+        "vol": 30.5,
+        "motorstate": 0,
+        "fw_rev": 5
+      },
+      {
+        "idx": 11,
+        "mode": 1,
+        "vol": 30.5,
+        "motorstate": 0,
+        "fw_rev": 5
+      },
+      {
+        "idx": 12,
+        "mode": 1,
+        "vol": 30.5,
+        "motorstate": 0,
+        "fw_rev": 5
+      },
+      {
+        "idx": 13,
+        "mode": 1,
+        "vol": 30.5,
+        "motorstate": 0,
+        "fw_rev": 5
+      },
+      {
+        "idx": 15,
+        "mode": 1,
+        "vol": 30.5,
+        "motorstate": 0,
+        "fw_rev": 5
+      },
+      {
+        "idx": 16,
+        "mode": 1,
+        "vol": 30.5,
+        "motorstate": 0,
+        "fw_rev": 5
+      },
+      {
+        "idx": 17,
+        "mode": 1,
+        "vol": 30.5,
+        "motorstate": 0,
+        "fw_rev": 5
+      },
+      {
+        "idx": 18,
+        "mode": 1,
+        "vol": 30.5,
+        "motorstate": 0,
+        "fw_rev": 5
+      },
+      {
+        "idx": 19,
+        "mode": 1,
+        "vol": 30.5,
+        "motorstate": 0,
+        "fw_rev": 5
+      },
+      {
+        "idx": 22,
+        "mode": 1,
+        "vol": 31.0,
+        "motorstate": 0,
+        "fw_rev": 5
+      },
+      {
+        "idx": 23,
+        "mode": 1,
+        "vol": 30.5,
+        "motorstate": 0,
+        "fw_rev": 5
+      },
+      {
+        "idx": 24,
+        "mode": 1,
+        "vol": 30.5,
+        "motorstate": 0,
+        "fw_rev": 5
+      },
+      {
+        "idx": 25,
+        "mode": 1,
+        "vol": 30.5,
+        "motorstate": 0,
+        "fw_rev": 5
+      },
+      {
+        "idx": 26,
+        "mode": 1,
+        "vol": 30.5,
+        "motorstate": 0,
+        "fw_rev": 5
+      },
+      {
+        "idx": 29,
+        "mode": 1,
+        "vol": 30.5,
+        "motorstate": 0,
+        "fw_rev": 5
+      },
+      {
+        "idx": 30,
+        "mode": 1,
+        "vol": 24.0,
+        "motorstate": 0,
+        "fw_rev": 5
+      }
+    ]
+  },
+  "pc4_dev_board": {
+    "model": "NVIDIA Orin Nano Developer Kit",
+    "tnspec": "3767-301-0003-H.1-1-1-jetson-orin-nano-devkit-",
+    "os": "Ubuntu 20.04.5 LTS",
+    "kernel": "5.10.104-tegra",
+    "l4t_release": "# R35 (release), REVISION: 3.1, GCID: 32827747, BOARD: t186ref, EABI: aarch64, DATE: Sun Mar 19 15:19:21 UTC 2023",
+    "ota_pipe_version": "1.1.0.3",
+    "pc4_modules": {
+      "master_service_pc4": "1.0.0.2",
+      "unitree_patch_pc4": "1.0.0.1"
+    }
+  },
+  "pc1_control_board": {
+    "robot_state_api_version": "1.0.0.2",
+    "services": [
+      {
+        "name": "ai_sport",
+        "protect": 0,
+        "status": 0,
+        "version": "1.0.2.153"
+      },
+      {
+        "name": "audio_player_service",
+        "protect": 0,
+        "status": 0,
+        "version": ""
+      },
+      {
+        "name": "auto_test_arm",
+        "protect": 0,
+        "status": 1,
+        "version": ""
+      },
+      {
+        "name": "auto_test_low",
+        "protect": 0,
+        "status": 1,
+        "version": ""
+      },
+      {
+        "name": "bashrunner",
+        "protect": 0,
+        "status": 0,
+        "version": "1.0.0.1"
+      },
+      {
+        "name": "basic_service",
+        "protect": 1,
+        "status": 0,
+        "version": "3.0.0.5"
+      },
+      {
+        "name": "battery_guard",
+        "protect": 0,
+        "status": 0,
+        "version": "1.0.0.0"
+      },
+      {
+        "name": "chat_go",
+        "protect": 0,
+        "status": 0,
+        "version": "1.9.2.89"
+      },
+      {
+        "name": "log_system",
+        "protect": 0,
+        "status": 0,
+        "version": "1.0.0.3"
+      },
+      {
+        "name": "motion_switcher",
+        "protect": 0,
+        "status": 0,
+        "version": "1.0.0.1"
+      },
+      {
+        "name": "net_switcher",
+        "protect": 0,
+        "status": 0,
+        "version": "1.0.2.1"
+      },
+      {
+        "name": "ota_box",
+        "protect": 0,
+        "status": 1,
+        "version": ""
+      },
+      {
+        "name": "ota_pipe",
+        "protect": 0,
+        "status": 0,
+        "version": ""
+      },
+      {
+        "name": "r1_arm_example",
+        "protect": 0,
+        "status": 0,
+        "version": "1.0.2.0"
+      },
+      {
+        "name": "robot_state",
+        "protect": 1,
+        "status": 0,
+        "version": "3.0.0.7"
+      },
+      {
+        "name": "robot_type_service",
+        "protect": 0,
+        "status": 0,
+        "version": "1.0.0.3"
+      },
+      {
+        "name": "ros_bridge",
+        "protect": 0,
+        "status": 0,
+        "version": "1.0.0.3"
+      },
+      {
+        "name": "state_estimator",
+        "protect": 0,
+        "status": 0,
+        "version": "1.0.0.1"
+      },
+      {
+        "name": "stereo_patch_pc1",
+        "protect": 0,
+        "status": 1,
+        "version": "0.4.0.0"
+      },
+      {
+        "name": "system_journal",
+        "protect": 0,
+        "status": 0,
+        "version": "1.0.0.1"
+      },
+      {
+        "name": "video_hub",
+        "protect": 0,
+        "status": 0,
+        "version": "1.0.0.11"
+      },
+      {
+        "name": "videohub_rtsp_server",
+        "protect": 0,
+        "status": 0,
+        "version": ""
+      },
+      {
+        "name": "vui_service",
+        "protect": 0,
+        "status": 0,
+        "version": "2.2.0.19"
+      },
+      {
+        "name": "webrtc_bridge",
+        "protect": 1,
+        "status": 0,
+        "version": "1.0.1.3"
+      },
+      {
+        "name": "webrtc_multicast_responder",
+        "protect": 0,
+        "status": 0,
+        "version": ""
+      },
+      {
+        "name": "webrtc_signal_server",
+        "protect": 1,
+        "status": 0,
+        "version": ""
+      }
+    ]
+  }
+}
+

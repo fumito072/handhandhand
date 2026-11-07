@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Unitree R1 — 宙吊り安全・オブジェクト認識＆把持ブラウザUI</title>
+  <style>
+    :root {
+      --bg: #090e16;
+      --panel: #111926;
+      --panel-alt: #172233;
+      --border: #25364d;
+      --text: #eaf1fb;
+      --muted: #8ea4c2;
+      --accent: #22c55e;
+      --accent-glow: rgba(34, 197, 94, 0.25);
+      --cyan: #38bdf8;
+      --amber: #f59e0b;
+      --danger: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+      padding: 14px 18px 28px;
+    }
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 16px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      margin-bottom: 14px;
+    }
+    .title-group h1 { font-size: 1.08rem; font-weight: 700; }
+    .title-group p { font-size: 0.77rem; color: var(--muted); margin-top: 2px; }
+    .top-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .badge {
+      padding: 5px 11px;
+      border-radius: 999px;
+      font-size: 0.76rem;
+      font-weight: 700;
+      background: var(--panel-alt);
+      border: 1px solid var(--border);
+    }
+    .badge.ok { color: #4ade80; border-color: rgba(74, 222, 128, 0.5); background: rgba(34, 197, 94, 0.14); }
+    .badge.warn { color: #fbbf24; border-color: rgba(251, 191, 36, 0.5); background: rgba(245, 158, 11, 0.14); }
+    .badge.err { color: #f87171; border-color: rgba(248, 113, 113, 0.5); background: rgba(239, 68, 68, 0.16); }
+
+    button, select, input {
+      font-family: inherit;
+      font-size: 0.82rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--panel-alt);
+      color: var(--text);
+      padding: 7px 12px;
+    }
+    button { cursor: pointer; font-weight: 600; transition: all 0.14s ease; }
+    button:hover:not(:disabled) { filter: brightness(1.12); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-estop {
+      background: var(--danger);
+      border-color: #f87171;
+      color: #fff;
+      padding: 8px 18px;
+      font-size: 0.88rem;
+      font-weight: 800;
+      box-shadow: 0 0 18px rgba(239, 68, 68, 0.4);
+    }
+    .btn-freeze {
+      background: #b45309;
+      border-color: #f59e0b;
+      color: #fff;
+      padding: 8px 14px;
+      font-weight: 700;
+    }
+    .btn-primary {
+      background: var(--accent);
+      border-color: #4ade80;
+      color: #041f0e;
+      font-weight: 800;
+      font-size: 0.95rem;
+      padding: 12px 16px;
+      width: 100%;
+      box-shadow: 0 0 18px var(--accent-glow);
+    }
+    .btn-learn {
+      background: linear-gradient(135deg, #0284c7, #0ea5e9);
+      border-color: #7dd3fc;
+      color: #f8fafc;
+      font-weight: 800;
+      font-size: 0.88rem;
+      padding: 10px 14px;
+      width: 100%;
+      box-shadow: 0 0 16px rgba(56, 189, 248, 0.28);
+    }
+    .learn-box {
+      background: #0d1a2b;
+      border: 1px solid #234264;
+      border-radius: 9px;
+      padding: 10px 11px;
+      margin-bottom: 10px;
+    }
+    .profile-pill {
+      background: #0b1522;
+      border: 1px solid #233852;
+      border-radius: 7px;
+      padding: 7px 9px;
+      margin-top: 8px;
+      font-size: 0.74rem;
+      color: #cbd5e1;
+    }
+    .btn-sub { background: #1e293b; border-color: #334155; }
+
+    .video-grid {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+    @media (max-width: 1024px) { .video-grid { grid-template-columns: 1fr; } }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 13px 15px;
+    }
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 9px;
+      gap: 8px;
+    }
+    .card-header h2 { font-size: 0.91rem; font-weight: 700; color: #dbeafe; }
+    .hint { font-size: 0.74rem; color: var(--muted); }
+
+    .img-wrap {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 544 / 448;
+      background: #06090e;
+      border-radius: 9px;
+      overflow: hidden;
+      border: 1px solid #1e2c3f;
+    }
+    .img-wrap img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+      cursor: crosshair;
+    }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+    }
+    @media (max-width: 1180px) { .info-grid { grid-template-columns: 1fr; } }
+
+    .reach-banner {
+      padding: 9px 12px;
+      border-radius: 8px;
+      font-size: 0.83rem;
+      font-weight: 700;
+      margin-bottom: 9px;
+      border: 1px solid var(--border);
+      background: #0e1724;
+    }
+    .reach-banner.ok {
+      border-color: rgba(74, 222, 128, 0.55);
+      background: rgba(34, 197, 94, 0.14);
+      color: #86efac;
+    }
+    .reach-banner.warn {
+      border-color: rgba(251, 191, 36, 0.55);
+      background: rgba(245, 158, 11, 0.14);
+      color: #fde68a;
+    }
+    .reach-banner.none {
+      color: var(--muted);
+    }
+
+    .kv-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 7px;
+    }
+    .kv {
+      background: var(--panel-alt);
+      border: 1px solid #223247;
+      border-radius: 8px;
+      padding: 7px 10px;
+    }
+    .kv .k { font-size: 0.7rem; color: var(--muted); }
+    .kv .v { font-size: 0.9rem; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
+
+    .status-banner {
+      background: #0e1826;
+      border-left: 4px solid var(--cyan);
+      padding: 9px 12px;
+      border-radius: 7px;
+      margin-bottom: 10px;
+      font-size: 0.82rem;
+      font-weight: 600;
+    }
+    .log-box {
+      max-height: 105px;
+      overflow-y: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.71rem;
+      background: #080d14;
+      border: 1px solid #1d2939;
+      border-radius: 7px;
+      padding: 7px 9px;
+      color: #a8bdd8;
+      margin-top: 9px;
+    }
+    .ctrl-row { display: flex; gap: 7px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+    .btn-grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 7px;
+      margin-top: 8px;
+    }
+    label.inline { display: flex; align-items: center; gap: 6px; font-size: 0.79rem; cursor: pointer; }
+
+    .finger-row {
+      display: grid;
+      grid-template-columns: 44px 1fr 62px 54px;
+      align-items: center;
+      gap: 7px;
+      font-size: 0.75rem;
+      margin-bottom: 5px;
+    }
+    .fbar {
+      height: 8px;
+      background: #0c131d;
+      border-radius: 999px;
+      overflow: hidden;
+      border: 1px solid #223146;
+    }
+    .fbar-fill { height: 100%; background: var(--cyan); transition: width 0.08s linear; }
+    .prox-pill {
+      font-size: 0.68rem;
+      text-align: center;
+      padding: 1px 5px;
+      border-radius: 999px;
+      background: #1a2535;
+      color: var(--muted);
+    }
+    .prox-pill.near { background: rgba(245, 158, 11, 0.26); color: #fcd34d; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="title-group">
+      <h1>Unitree R1 — ハーネス宙吊り安全・オブジェクト認識＆把持ブラウザUI</h1>
+      <p>両眼ステレオ深度 (WLS+平面拘束) ＋ 上空ビジュアルサーボ微補正 ＋ Revo 2 近接減速＆触覚把持 ｜ 脚トルク完全 0Nm・失敗時その場停止</p>
+    </div>
+    <div class="top-badges">
+      <span id="badgeR1" class="badge err">R1: 未接続</span>
+      <span id="badgeBat" class="badge warn">BMS: --%</span>
+      <span id="badgeSafe" class="badge ok">安全保護: 宙吊り脚0Nm</span>
+      <span id="badgeMs" class="badge">推論: -- ms</span>
+      <button class="btn-freeze" onclick="holdHere()">⏸ その場で静止</button>
+      <button class="btn-estop" onclick="triggerEstop()">🛑 非常停止 / 粘性脱力 (Esc)</button>
+    </div>
+  </header>
+
+  <section class="video-grid">
+    <div class="card">
+      <div class="card-header">
+        <h2>左ステレオ ＋ 右上 1280×720 HD実寸認識（極細1px枠・親指×人差指ピンチ軸）</h2>
+        <div class="ctrl-row" style="margin-top:0">
+          <span class="hint">※対象クリックでロック可能</span>
+          <button class="btn-sub" style="padding:3px 8px;font-size:0.72rem" onclick="clearClickTarget()">ロック解除</button>
+        </div>
+      </div>
+      <div class="img-wrap">
+        <img id="imgRgb" alt="R1 Live Stereo Left" onclick="onImageClick(event)" />
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h2>両眼ステレオ深度マップ (WLS サブピクセル視差 544×448)</h2>
+        <span id="lblPlane" class="hint">上面平面 RANSAC: 待機中</span>
+      </div>
+      <div class="img-wrap">
+        <img id="imgDisp" alt="Stereo Disparity WLS" />
+      </div>
+    </div>
+  </section>
+
+  <section class="info-grid">
+    <!-- Panel 1: Target Perception & Reachability -->
+    <div class="card">
+      <div class="card-header">
+        <h2>1. カメラ認識オブジェクト ＆ 物理リーチ判定</h2>
+        <select id="selSource" style="padding:4px 8px;font-size:0.74rem" onchange="changeSource(this.value)">
+          <option value="auto">映像: R1ライブ自動</option>
+          <option value="r1_live">映像: R1ライブ固定</option>
+          <option value="r1_sample">映像: 保存サンプル</option>
+        </select>
+      </div>
+
+      <div id="reachBanner" class="reach-banner none">目の前のオブジェクトを探しています...</div>
+
+      <div class="kv-grid">
+        <div class="kv"><div class="k">認識ラベル / 信頼度</div><div class="v" id="chLabel">未検出</div></div>
+        <div class="kv"><div class="k">自動選択ハンド / IK誤差</div><div class="v" id="chHand" style="color:var(--accent)">--</div></div>
+        <div class="kv"><div class="k">3D 寸法 (長×幅×高)</div><div class="v" id="chDims">-- × -- × -- mm</div></div>
+        <div class="kv"><div class="k">向き主軸 / 2指ピンチ角</div><div class="v" id="chCamDist">--</div></div>
+        <div class="kv"><div class="k">胴体基準 3D 座標 (X,Y,Z)</div><div class="v" id="chPosTorso">-- m</div></div>
+        <div class="kv"><div class="k">ビジュアルサーボ補正値</div><div class="v" id="vsOffset">待機中</div></div>
+      </div>
+
+      <div class="ctrl-row" style="margin-top:10px">
+        <input id="inpPrompts" type="text" style="flex:1" placeholder="white bottle cap, white cap, chocolate..." />
+        <button class="btn-sub" onclick="savePrompts()">検出対象を更新</button>
+      </div>
+    </div>
+
+    <!-- Panel 2: Safe Grasp Control (Zero-Thrash Suspended Mode) -->
+    <div class="card">
+      <div class="card-header">
+        <h2>2. 安全把持コントロール（脚0Nm・元の位置へ安全帰還）</h2>
+        <select id="selExecMode" style="padding:4px 8px;font-size:0.74rem" onchange="updateExecMode(this.value)">
+          <option value="grasp_and_hold">動作: 掴んで元の位置へ戻し静止 (推奨)</option>
+          <option value="vision_only">動作: Dry-Run (モーター動かさず検証)</option>
+          <option value="pick_only">動作: 掴んで机へ戻す</option>
+          <option value="full_handover">動作: 掴んで人の両掌へ渡す</option>
+        </select>
+      </div>
+
+      <div class="status-banner" id="taskBanner">状態: 待機中（ハーネス宙吊り・モーター未駆動）</div>
+
+      <div class="ctrl-row" style="margin-top:0;margin-bottom:8px">
+        <span class="hint">進入・把持姿勢:</span>
+        <select id="selPosture" style="flex:1;padding:5px 8px;font-size:0.78rem;font-weight:700;color:#bae6fd" onchange="patchConfig({grasp_posture: this.value})">
+          <option value="surface_pinch">🎯 表面拘束またぎ2指ピンチ（真上から66mm開口→机面ガイド自己調心・最推奨）</option>
+          <option value="c_pinch">🤏 親指×人差指 2指C字サイドピンチ（横スライド方式）</option>
+          <option value="top_down">🖐 真上アプローチ（従来の掌下向き進入）</option>
+        </select>
+      </div>
+
+      <button id="btnGrasp" class="btn-primary" onclick="manualTrigger()">
+        🎯 認識中のオブジェクトをゆっくり掴む（未成立でも安全帰還）
+      </button>
+
+      <div class="btn-grid-3">
+        <button class="btn-sub" onclick="handTestSelected('release')">✋ ハンドを開く</button>
+        <button class="btn-sub" onclick="holdHere()">⏸ その場で静止</button>
+        <button class="btn-sub" onclick="safeReturn()">🏠 ゆっくり戻す</button>
+      </div>
+
+      <div class="ctrl-row" style="justify-content:space-between;margin-top:9px">
+        <label class="inline" title="ハーネス宙吊り時に脚全関節のトルクを完全0Nmにし、暴れ・足踏みを物理的にゼロにします">
+          <input type="checkbox" id="chkSuspended" onchange="patchConfig({use_suspended_mode: this.checked})" />
+          <strong style="color:#86efac">ハーネス宙吊り安全 (脚 0Nm)</strong>
+        </label>
+        <label class="inline" title="対象上空ホバリング時にカメラでRevo2指先と対象のズレを計測して真上へ微補正します">
+          <input type="checkbox" id="chkVisualServo" onchange="patchConfig({enable_visual_servo: this.checked})" />
+          <strong style="color:#7dd3fc">上空ビジュアルサーボ補正</strong>
+        </label>
+      </div>
+
+      <div class="log-box" id="logBox">システム起動完了。R1 接続・カメラ監視中。</div>
+    </div>
+
+    <!-- Panel 3: BrainCo Revo 2 Tactile & Object Memory -->
+    <div class="card">
+      <div class="card-header">
+        <h2>3. Revo 2 指先触覚センサー ＆ オブジェクト事前記憶</h2>
+        <select id="selHandView" style="padding:4px 8px;font-size:0.74rem" onchange="renderHands()">
+          <option value="right">対象/表示: 右ハンド</option>
+          <option value="left">対象/表示: 左ハンド</option>
+        </select>
+      </div>
+
+      <div class="learn-box">
+        <div class="hint" style="color:#bae6fd;margin-bottom:6px">
+          <strong>🖐 指先セット状態からのオブジェクト記憶（アーム駆動なし）</strong><br/>
+          事前にハンド位置を合わせて指の間に対象をセットした状態で押すと、<strong>現在の指位置からそのまま優しく閉じて</strong>形状幅・硬さ・反力・近接特徴を認識＆保存します。
+        </div>
+        <div class="ctrl-row" style="margin-top:4px;margin-bottom:7px">
+          <input id="inpLearnName" type="text" value="チロルチョコ" style="flex:1" placeholder="記憶名（例: チロルチョコ, 白キャップ）" />
+          <label class="inline" title="ONにすると記憶完了直後に指を開きます。OFF(推奨)なら落下防止のため優しく保持し続けます">
+            <input type="checkbox" id="chkReleaseAfterLearn" />
+            <span>記憶後に開く</span>
+          </label>
+        </div>
+        <button id="btnLearnObj" class="btn-learn" onclick="learnInHandObject()">
+          🧠 指先にセット中のオブジェクトを認識して記憶
+        </button>
+
+        <div class="profile-pill" id="profileBox">
+          記憶プロファイル: 未登録（登録すると段ボール擦れ・空振りを自動判別します）
+        </div>
+      </div>
+
+      <div id="fingersContainer" style="margin-top:4px"></div>
+
+      <div class="ctrl-row" style="margin-top:9px">
+        <button class="btn-sub" onclick="handTest('open')">単体オープン</button>
+        <button class="btn-sub" style="border-color:var(--accent);color:#86efac" onclick="handTest('gentle_grasp')">単体ジェントル把持</button>
+        <button class="btn-sub" onclick="handTest('release')">単体リリース</button>
+      </div>
+
+      <div class="ctrl-row" style="margin-top:9px">
+        <span class="hint">優しさ把持力: <strong id="lblForce">0.38</strong> N</span>
+        <input id="rngForce" type="range" min="0.28" max="0.80" step="0.02" value="0.38" style="flex:1"
+               oninput="document.getElementById('lblForce').textContent=Number(this.value).toFixed(2)"
+               onchange="patchConfig({gentle_force_N: Number(this.value)})" />
+      </div>
+
+      <div class="ctrl-row" style="margin-top:6px;justify-content:space-between">
+        <span class="hint">Hand-Eye微調整(mm):</span>
+        <div>
+          <input id="inpDx" type="number" step="5" value="0" style="width:56px" title="ΔX 前後(mm)" onchange="saveOffsets()" />
+          <input id="inpDy" type="number" step="5" value="52" style="width:56px" title="ΔY 左右(mm)" onchange="saveOffsets()" />
+          <input id="inpDz" type="number" step="5" value="8" style="width:56px" title="ΔZ 上下(mm)" onchange="saveOffsets()" />
+        </div>
+        <button class="btn-sub" style="padding:5px 9px;font-size:0.73rem" onclick="deployR1()">R1再同期</button>
+      </div>
+    </div>
+  </section>
+
+  <script>
+    let latestPacket = null;
+    let lastMemJson = "";
+    const FNAMES = ["親指", "人差指", "中指", "薬指", "小指"];
+
+    async function loadInitialConfig() {
+      const r = await fetch("/api/config");
+      const cfg = await r.json();
+      document.getElementById("inpPrompts").value = (cfg.choco_prompts || []).join(", ");
+      document.getElementById("chkSuspended").checked = cfg.use_suspended_mode !== false;
+      document.getElementById("chkVisualServo").checked = cfg.enable_visual_servo !== false;
+      document.getElementById("selExecMode").value = cfg.execution_mode || "grasp_and_hold";
+      if (document.getElementById("selPosture")) {
+        document.getElementById("selPosture").value = cfg.grasp_posture || "surface_pinch";
+      }
+      document.getElementById("rngForce").value = cfg.gentle_force_N || 0.38;
+      document.getElementById("lblForce").textContent = Number(cfg.gentle_force_N || 0.38).toFixed(2);
+      document.getElementById("inpDx").value = Math.round((cfg.hand_eye_dx_m || 0) * 1000);
+      document.getElementById("inpDy").value = Math.round((cfg.hand_eye_dy_m || 0) * 1000);
+      document.getElementById("inpDz").value = Math.round((cfg.hand_eye_dz_m || 0) * 1000);
+    }
+
+    async function patchConfig(patch) {
+      await fetch("/api/config", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(patch),
+      });
+    }
+
+    function savePrompts() {
+      const list = document.getElementById("inpPrompts").value.split(",").map(s => s.trim()).filter(Boolean);
+      patchConfig({choco_prompts: list});
+    }
+    function updateExecMode(v) { patchConfig({execution_mode: v}); }
+    function saveOffsets() {
+      patchConfig({
+        hand_eye_dx_m: Number(document.getElementById("inpDx").value) / 1000.0,
+        hand_eye_dy_m: Number(document.getElementById("inpDy").value) / 1000.0,
+        hand_eye_dz_m: Number(document.getElementById("inpDz").value) / 1000.0,
+      });
+    }
+
+    async function changeSource(mode) {
+      await fetch("/api/source_mode", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({mode}),
+      });
+    }
+
+    async function onImageClick(ev) {
+      const img = ev.currentTarget;
+      const rect = img.getBoundingClientRect();
+      const u = Math.round(((ev.clientX - rect.left) / rect.width) * 544);
+      const v = Math.round(((ev.clientY - rect.top) / rect.height) * 448);
+      await fetch("/api/click_target", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({u, v}),
+      });
+    }
+
+    async function clearClickTarget() {
+      await fetch("/api/click_target", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({clear: true}),
+      });
+    }
+
+    async function manualTrigger() {
+      const r = await fetch("/api/trigger", {method: "POST"});
+      const d = await r.json();
+      if (!d.ok) alert(d.error || "発火できませんでした");
+    }
+
+    async function holdHere() {
+      await fetch("/api/hold_here", {method: "POST"});
+    }
+
+    async function safeReturn() {
+      const r = await fetch("/api/safe_return", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({open_hand_first: true}),
+      });
+      const d = await r.json();
+      if (!d.ok) alert(d.error || "帰還エラー");
+    }
+
+    async function triggerEstop() {
+      await fetch("/api/estop", {method: "POST"});
+    }
+
+    async function deployR1() {
+      document.getElementById("badgeR1").textContent = "R1: 同期中...";
+      const r = await fetch("/api/deploy_r1", {method: "POST"});
+      const d = await r.json();
+      alert(d.message || JSON.stringify(d));
+    }
+
+    async function handTest(action) {
+      const side = document.getElementById("selHandView").value;
+      const r = await fetch("/api/hand_test", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({side, action}),
+      });
+      const d = await r.json();
+      if (!d.ok) alert(d.error || "ハンド操作エラー");
+    }
+
+    async function handTestSelected(action) {
+      const side = latestPacket?.task?.selected_hand || latestPacket?.choco?.recommended_hand || document.getElementById("selHandView").value;
+      const r = await fetch("/api/hand_test", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({side, action}),
+      });
+      const d = await r.json();
+      if (!d.ok) alert(d.error || "ハンド操作エラー");
+    }
+
+    async function learnInHandObject() {
+      const side = document.getElementById("selHandView").value;
+      const name = (document.getElementById("inpLearnName").value || "白キャップ").trim();
+      const release_after = document.getElementById("chkReleaseAfterLearn").checked;
+      const btn = document.getElementById("btnLearnObj");
+      btn.disabled = true;
+      try {
+        const r = await fetch("/api/learn_object", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({side, name, release_after}),
+        });
+        const d = await r.json();
+        if (!d.ok) alert(d.error || "オブジェクト記憶を開始できませんでした");
+      } finally {
+        setTimeout(() => { btn.disabled = false; }, 1200);
+      }
+    }
+
+    async function selectProfile(profile_id) {
+      const r = await fetch("/api/object_profiles/select", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({profile_id}),
+      });
+      const d = await r.json();
+      if (d.tactile_memory) renderProfileBox(d.tactile_memory, true);
+    }
+
+    async function toggleProfileEnabled(enabled) {
+      const r = await fetch("/api/object_profiles/select", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({enabled}),
+      });
+      const d = await r.json();
+      if (d.tactile_memory) renderProfileBox(d.tactile_memory, true);
+    }
+
+    async function deleteActiveProfile(profile_id) {
+      if (!profile_id) return;
+      const r = await fetch("/api/object_profiles/delete", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({profile_id}),
+      });
+      const d = await r.json();
+      if (d.tactile_memory) renderProfileBox(d.tactile_memory, true);
+    }
+
+    function renderProfileBox(mem, force = false) {
+      if (!mem) return;
+      const j = JSON.stringify(mem);
+      if (!force && j === lastMemJson) return;
+      lastMemJson = j;
+
+      const box = document.getElementById("profileBox");
+      const profs = mem.profiles || [];
+      const act = mem.active_profile;
+      if (!profs.length || !act) {
+        box.innerHTML = `<span style="color:var(--muted)">記憶プロファイル: 未登録（指の間にセットして上のボタンを押すと登録されます）</span>`;
+        return;
+      }
+      const opts = profs.map(p => {
+        const sJa = p.side === "left" ? "左手" : "右手";
+        const sel = p.profile_id === act.profile_id ? "selected" : "";
+        return `<option value="${p.profile_id}" ${sel}>${p.name} (${sJa} / 約${p.estimated_span_mm}mm)</option>`;
+      }).join("");
+      const qShort = `[親:${act.pinch_positions[0]}, 人:${act.pinch_positions[2]}, 中:${act.pinch_positions[3]}]`;
+      box.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap">
+          <label class="inline" style="font-size:0.74rem">
+            <input type="checkbox" ${mem.enabled ? "checked" : ""} onchange="toggleProfileEnabled(this.checked)" />
+            <strong style="color:${mem.enabled ? '#86efac' : 'var(--muted)'}">記憶プロファイル照合 ${mem.enabled ? 'ON' : 'OFF'}</strong>
+          </label>
+          <div style="display:flex;gap:4px;align-items:center">
+            <select style="padding:2px 6px;font-size:0.72rem" onchange="selectProfile(this.value)">${opts}</select>
+            <button class="btn-sub" style="padding:2px 7px;font-size:0.7rem" title="削除" onclick="deleteActiveProfile('${act.profile_id}')">🗑</button>
+          </div>
+        </div>
+        <div style="margin-top:5px;color:#93c5fd;line-height:1.4">
+          挟み幅 <strong>${act.estimated_span_mm} mm</strong> ／ <strong>${act.hardness_label}</strong>（剛性 ${act.stiffness_N_per_100u}） ／ 推奨把持力 <strong>${act.recommended_force_N} N</strong><br/>
+          記憶エンコーダ角: <code>${qShort}</code> ／ 接触指: ${(act.active_finger_names || []).join("・")}
+        </div>`;
+    }
+
+    function renderHands() {
+      const cont = document.getElementById("fingersContainer");
+      const side = document.getElementById("selHandView").value;
+      const hdata = ((latestPacket?.telemetry?.hands || {})[side]) || {};
+      const fingers = hdata?.tactile?.fingers || [];
+      const grasp = hdata?.grasp || null;
+
+      let html = "";
+      for (let i = 0; i < 5; i++) {
+        const f = fingers[i] || {normal_N: 0, proximity: 0};
+        const force = grasp ? (grasp.delta_force_N[i] || 0) : (f.normal_N || 0);
+        const near = grasp ? !!grasp.near_slowdown[i] : false;
+        const pct = Math.min(100, Math.round((force / 0.8) * 100));
+        html += `
+          <div class="finger-row">
+            <span>${FNAMES[i]}</span>
+            <div class="fbar"><div class="fbar-fill" style="width:${pct}%"></div></div>
+            <span style="text-align:right;font-variant-numeric:tabular-nums">${force.toFixed(2)} N</span>
+            <span class="prox-pill ${near ? 'near' : ''}">${near ? '減速!' : '近接OK'}</span>
+          </div>`;
+      }
+      if (grasp) {
+        const verTag = grasp.grasp_verified ? "✅把持確認OK" : (grasp.empty_close ? "⚠️空振り検知" : "監視中");
+        html += `<div class="hint" style="margin-top:5px;color:#93c5fd">[${verTag}] ${grasp.stage} — ${grasp.detail}</div>`;
+      } else if (hdata.unavailable) {
+        html += `<div class="hint" style="margin-top:5px">ハンド状態: ${hdata.unavailable}</div>`;
+      }
+      cont.innerHTML = html;
+    }
+
+    function connectWs() {
+      const proto = location.protocol === "https:" ? "wss" : "ws";
+      const ws = new WebSocket(`${proto}://${location.host}/ws`);
+      ws.onmessage = (ev) => {
+        const p = JSON.parse(ev.data);
+        latestPacket = p;
+        if (p.rgb_b64) document.getElementById("imgRgb").src = "data:image/jpeg;base64," + p.rgb_b64;
+        if (p.disp_b64) document.getElementById("imgDisp").src = "data:image/jpeg;base64," + p.disp_b64;
+
+        const bR1 = document.getElementById("badgeR1");
+        if (p.r1_connected) {
+          bR1.className = "badge ok";
+          bR1.textContent = "R1: ライブ接続中";
+        } else {
+          bR1.className = "badge err";
+          bR1.textContent = "R1: 未接続";
+        }
+
+        const rob = p.telemetry?.robot || {};
+        const soc = rob?.bms?.soc;
+        const bBat = document.getElementById("badgeBat");
+        if (soc !== undefined) {
+          bBat.textContent = `BMS: ${soc}% (${(rob.bms.voltage_V || 0).toFixed(1)}V)`;
+          bBat.className = soc <= 20 ? "badge err" : (soc <= 35 ? "badge warn" : "badge ok");
+        }
+        const bSafe = document.getElementById("badgeSafe");
+        if (rob.engaged) {
+          bSafe.textContent = rob.suspended ? `制御中: 宙吊り脚0Nm (${rob.stage})` : `制御中: 立位ソフト (${rob.stage})`;
+          bSafe.className = rob.stage === "fault_hold" ? "badge warn" : "badge ok";
+        } else {
+          bSafe.textContent = "待機中: アーム未駆動 (安全)";
+          bSafe.className = "badge ok";
+        }
+
+        document.getElementById("badgeMs").textContent = `推論: ${p.vision_ms} ms`;
+        document.getElementById("lblPlane").textContent = p.table_plane_detected
+          ? "上面平面 RANSAC: 検出済み"
+          : "上面平面 RANSAC: 探索中";
+
+        const ch = p.choco;
+        const rb = document.getElementById("reachBanner");
+        const btn = document.getElementById("btnGrasp");
+        const execMode = document.getElementById("selExecMode").value;
+
+        if (ch) {
+          const handJa = ch.recommended_hand === "left" ? "左手 (Left)" : "右手 (Right)";
+          const hdBadge = ch.xy_source === "hd_plane_ray" ? "HD平面光線" : (ch.hd_used ? "HD" : "ST");
+          const pyaw = (ch.achieved_pinch_yaw_deg !== undefined) ? ch.achieved_pinch_yaw_deg : ch.yaw_deg;
+          document.getElementById("chLabel").textContent = `${ch.label} (${Math.round(ch.confidence * 100)}% / ${hdBadge})`;
+          document.getElementById("chHand").textContent = `${handJa} / IK ${ch.ik_error_mm}mm`;
+          document.getElementById("chDims").textContent = `${ch.length_mm} × ${ch.width_mm} × ${ch.height_mm} mm`;
+          document.getElementById("chCamDist").textContent = `主軸 ${ch.yaw_deg >= 0 ? '+' : ''}${ch.yaw_deg}° → 把持 ${pyaw >= 0 ? '+' : ''}${pyaw}°`;
+          document.getElementById("chPosTorso").textContent = `[${ch.centroid_torso_m.join(", ")}] m`;
+
+          if (ch.reachable) {
+            rb.className = "reach-banner ok";
+            rb.textContent = `✅ 把持リーチ圏内 OK！ (${handJa}・IK残差 ${ch.ik_error_mm}mm) — 安全に掴めます`;
+            btn.disabled = false;
+          } else {
+            rb.className = "reach-banner warn";
+            rb.textContent = `⚠️ ${ch.label} 認識中 — あと約 ${ch.move_closer_cm} cm 手前（R1側）へ寄せてください`;
+            btn.disabled = (execMode !== "vision_only");
+          }
+        } else {
+          rb.className = "reach-banner none";
+          rb.textContent = "目の前のオブジェクトを探索中（画面内の対象をクリックしてロックも可能）";
+          btn.disabled = true;
+          document.getElementById("chLabel").textContent = "未検出";
+          document.getElementById("chHand").textContent = "--";
+          document.getElementById("chDims").textContent = "-- × -- × -- mm";
+          document.getElementById("chCamDist").textContent = "-- cm";
+          document.getElementById("chPosTorso").textContent = "-- m";
+        }
+
+        const vs = p.task?.visual_servo;
+        if (vs && vs.delta_xy_torso_m) {
+          document.getElementById("vsOffset").textContent =
+            `ΔX=${Math.round(vs.delta_xy_torso_m[0]*1000)}mm, ΔY=${Math.round(vs.delta_xy_torso_m[1]*1000)}mm`;
+        } else {
+          document.getElementById("vsOffset").textContent = "ホバリング時に自動計測";
+        }
+
+        if (p.task) {
+          document.getElementById("taskBanner").textContent = `[${p.task.phase}] ${p.task.message}`;
+          if (p.task.step_history && p.task.step_history.length) {
+            document.getElementById("logBox").innerHTML = p.task.step_history.slice().reverse().join("<br/>");
+          }
+        }
+        if (p.tactile_memory) {
+          renderProfileBox(p.tactile_memory);
+        }
+        renderHands();
+      };
+      ws.onclose = () => setTimeout(connectWs, 1000);
+    }
+
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") triggerEstop();
+    });
+
+    fetch("/api/object_profiles").then(r => r.json()).then(m => renderProfileBox(m, true)).catch(() => {});
+    loadInitialConfig();
+    renderHands();
+    connectWs();
+  </script>
+</body>
+</html>

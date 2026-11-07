@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>Unitree R1 EDU (R1_05387) ファームウェア・システム構成レポート</title>
+<style>
+  @page {
+    size: A4 portrait;
+    margin: 0;
+  }
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  html, body {
+    width: 210mm;
+    height: 297mm;
+    overflow: hidden;
+    background: #ffffff;
+    color: #0f172a;
+    font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 9pt;
+    line-height: 1.38;
+  }
+  .mono {
+    font-family: "SF Mono", Menlo, Monaco, Consolas, monospace;
+  }
+  .page {
+    width: 210mm;
+    height: 297mm;
+    padding: 9.5mm 11mm 8.5mm 11mm;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+
+  /* Header */
+  .header {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+    color: #f8fafc;
+    border-radius: 8px;
+    padding: 11px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .header-left .badge {
+    display: inline-block;
+    background: #38bdf8;
+    color: #0f172a;
+    font-weight: 700;
+    font-size: 7.2pt;
+    padding: 1.5px 7px;
+    border-radius: 999px;
+    letter-spacing: 0.04em;
+    margin-bottom: 4px;
+  }
+  .header-left h1 {
+    font-size: 14.5pt;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    color: #ffffff;
+  }
+  .header-left .sub {
+    font-size: 8pt;
+    color: #cbd5e1;
+    margin-top: 2px;
+  }
+  .header-right {
+    text-align: right;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 7px;
+    padding: 6px 13px;
+  }
+  .header-right .fw-label {
+    font-size: 7pt;
+    color: #93c5fd;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+  }
+  .header-right .fw-num {
+    font-size: 17.5pt;
+    font-weight: 800;
+    color: #ffffff;
+    line-height: 1.15;
+  }
+  .header-right .fw-date {
+    font-size: 6.8pt;
+    color: #cbd5e1;
+    margin-top: 1px;
+  }
+
+  /* Top KPI Strip */
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+  }
+  .kpi-card {
+    background: #f8fafc;
+    border: 1px solid #cbd5e1;
+    border-top: 3px solid #0284c7;
+    border-radius: 6px;
+    padding: 7px 10px;
+  }
+  .kpi-card.primary {
+    background: #f0f9ff;
+    border-color: #7dd3fc;
+    border-top-color: #0284c7;
+  }
+  .kpi-title {
+    font-size: 7.2pt;
+    color: #475569;
+    font-weight: 600;
+  }
+  .kpi-value {
+    font-size: 13.5pt;
+    font-weight: 800;
+    color: #0f172a;
+    margin: 2px 0 1px 0;
+  }
+  .kpi-card.primary .kpi-value {
+    color: #0369a1;
+  }
+  .kpi-note {
+    font-size: 6.7pt;
+    color: #64748b;
+  }
+
+  /* Section Styling */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1.08fr 0.92fr;
+    gap: 9px;
+  }
+  .panel {
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    overflow: hidden;
+    background: #ffffff;
+  }
+  .panel-header {
+    background: #f1f5f9;
+    border-bottom: 1px solid #cbd5e1;
+    padding: 5px 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .panel-header h2 {
+    font-size: 8.4pt;
+    font-weight: 700;
+    color: #1e293b;
+    white-space: nowrap;
+  }
+  .panel-header .tag {
+    font-size: 6.7pt;
+    color: #475569;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  table.kv-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 7.3pt;
+  }
+  table.kv-table tr {
+    border-bottom: 1px solid #e2e8f0;
+  }
+  table.kv-table tr:last-child {
+    border-bottom: none;
+  }
+  table.kv-table th {
+    width: 38%;
+    text-align: left;
+    padding: 4.5px 8px;
+    color: #475569;
+    font-weight: 600;
+    background: #f8fafc;
+    white-space: nowrap;
+  }
+  table.kv-table td {
+    padding: 4.5px 8px;
+    color: #0f172a;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  /* Services Table */
+  .svc-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+  }
+  .svc-col:first-child {
+    border-right: 1px solid #cbd5e1;
+  }
+  table.svc-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 7pt;
+    table-layout: fixed;
+  }
+  table.svc-table thead th {
+    background: #f8fafc;
+    color: #475569;
+    font-weight: 700;
+    font-size: 6.6pt;
+    text-align: left;
+    padding: 4px 6px;
+    border-bottom: 1px solid #cbd5e1;
+    white-space: nowrap;
+  }
+  table.svc-table tbody tr {
+    border-bottom: 1px solid #f1f5f9;
+  }
+  table.svc-table tbody tr:nth-child(even) {
+    background: #fcfdff;
+  }
+  table.svc-table tbody tr:last-child {
+    border-bottom: none;
+  }
+  table.svc-table td {
+    padding: 3.6px 6px;
+    vertical-align: middle;
+    white-space: nowrap;
+  }
+  .ver-badge {
+    font-weight: 700;
+    color: #0369a1;
+  }
+  .ver-empty {
+    color: #94a3b8;
+  }
+  .role-text {
+    color: #475569;
+    font-size: 6.6pt;
+  }
+  .status-pill {
+    display: inline-block;
+    padding: 1px 5.5px;
+    border-radius: 999px;
+    font-size: 6.2pt;
+    font-weight: 700;
+    text-align: center;
+    white-space: nowrap;
+  }
+  .status-on {
+    background: #dcfce7;
+    color: #166534;
+  }
+  .status-off {
+    background: #f1f5f9;
+    color: #64748b;
+  }
+  .protect-mark {
+    color: #0284c7;
+    font-size: 6.3pt;
+    font-weight: 700;
+    margin-left: 2px;
+  }
+
+  /* Footer */
+  .footer {
+    border-top: 1px solid #cbd5e1;
+    padding-top: 5px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 6.7pt;
+    color: #64748b;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- 1. Header -->
+  <div class="header">
+    <div class="header-left">
+      <span class="badge">UNITREE R1 EDU / HUMANOID ROBOT</span>
+      <h1>ファームウェア・各部バージョン構成一覧</h1>
+      <div class="sub">
+        機体識別名: <span class="mono">R1_05387</span> &nbsp;|&nbsp;
+        シリアル番号 (SN): <span class="mono">E39N4000Q6RC1M8S</span> &nbsp;|&nbsp;
+        Machine Type: <span class="mono">1</span>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="fw-label">全体ファームウェア番号</div>
+      <div class="fw-num mono">V1.4.2.8</div>
+      <div class="fw-date">実機取得日: 2026-11-04</div>
+    </div>
+  </div>
+
+  <!-- 2. Top 4 KPI Cards -->
+  <div class="kpi-grid">
+    <div class="kpi-card primary">
+      <div class="kpi-title">全体ソフトウェア (Package)</div>
+      <div class="kpi-value mono">V1.4.2.8</div>
+      <div class="kpi-note mono">get_software_version.sh</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-title">本体ハードウェアバージョン</div>
+      <div class="kpi-value mono">1.0</div>
+      <div class="kpi-note mono">get_hardware_version.sh (raw: 10)</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-title">認証・プロトコル世代</div>
+      <div class="kpi-value mono">V3 世代</div>
+      <div class="kpi-note mono">Protocol v3 (flags: 3)</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-title">BMS (バッテリー管理基板)</div>
+      <div class="kpi-value mono">0.44</div>
+      <div class="kpi-note"><span class="mono">fn: 120</span> / 9S 構成 / SOH <span class="mono">97%</span></div>
+    </div>
+  </div>
+
+  <!-- 3. Hardware Subsystems & PC4 Dev Board -->
+  <div class="two-col">
+    <div class="panel">
+      <div class="panel-header">
+        <h2>各部ハードウェア・サブシステム構成</h2>
+        <span class="tag mono">Subsystems</span>
+      </div>
+      <table class="kv-table">
+        <tr>
+          <th>関節アクチュエータ (26軸)</th>
+          <td>FW Rev <span class="mono"><strong>5</strong></span> (脚12・腰2・両腕10・首2 / 全軸正常)</td>
+        </tr>
+        <tr>
+          <th>メインボード (<span class="mono">MainBoard</span>)</th>
+          <td class="mono">State [32,0,0,0,0,1] / mode_machine: 1</td>
+        </tr>
+        <tr>
+          <th>バッテリーパック (<span class="mono">BMS</span>)</th>
+          <td>FW <span class="mono"><strong>0.44</strong></span> (9セル直列 / 充放電サイクル <span class="mono">19回</span>)</td>
+        </tr>
+        <tr>
+          <th>IMU (慣性計測ユニット)</th>
+          <td>デュアル構成 (体幹 <span class="mono">Body</span> + 骨盤 <span class="mono">Secondary</span>)</td>
+        </tr>
+        <tr>
+          <th>PC4 基板型番 (<span class="mono">TNSPEC</span>)</th>
+          <td class="mono">3767-301-0003-H.1-1-1 (SoC: 0x23)</td>
+        </tr>
+        <tr>
+          <th>無線リモコン受信機 (<span class="mono">RF</span>)</th>
+          <td>有効 (<span class="mono">rfpower: 1</span>)</td>
+        </tr>
+      </table>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <h2>開発ボード (PC4 / NVIDIA Jetson) 構成</h2>
+        <span class="tag mono">Orin Nano 8GB</span>
+      </div>
+      <table class="kv-table">
+        <tr>
+          <th>OS / アーキテクチャ</th>
+          <td>Ubuntu 20.04.5 LTS (<span class="mono">aarch64</span>)</td>
+        </tr>
+        <tr>
+          <th>Linux カーネル / L4T</th>
+          <td class="mono">5.10.104-tegra / L4T R35.3.1</td>
+        </tr>
+        <tr>
+          <th>CUDA / TensorRT</th>
+          <td class="mono">11.4.19 / TensorRT 8.5.2.1</td>
+        </tr>
+        <tr>
+          <th>OTA パイプ (<span class="mono">ota_pipe</span>)</th>
+          <td class="mono"><strong>1.1.0.3</strong></td>
+        </tr>
+        <tr>
+          <th><span class="mono">master_service_pc4</span></th>
+          <td class="mono"><strong>1.0.0.2</strong></td>
+        </tr>
+        <tr>
+          <th><span class="mono">unitree_patch_pc4</span></th>
+          <td class="mono"><strong>1.0.0.1</strong></td>
+        </tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- 4. PC1 All 26 Services -->
+  <div class="panel">
+    <div class="panel-header">
+      <h2>メイン制御基板 (PC1) サービス・モジュール番号一覧 (全26件)</h2>
+      <span class="tag mono">RobotState Server API: 1.0.0.2 / ★=保護対象</span>
+    </div>
+    <div class="svc-grid">
+      <!-- Left 13 rows: Versioned Core & Application Modules -->
+      <div class="svc-col">
+        <table class="svc-table">
+          <thead>
+            <tr>
+              <th style="width:36%">サービス / モジュール名</th>
+              <th style="width:19%">バージョン</th>
+              <th style="width:31%">主な役割</th>
+              <th style="width:14%">状態</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="mono">basic_service<span class="protect-mark">★</span></td>
+              <td class="mono ver-badge">3.0.0.5</td>
+              <td class="role-text">モーター・基底制御</td>
+              <td><span class="status-pill status-on">稼働中</span></td>
+            </tr>
+            <tr>
+              <td class="mono">robot_state<span class="protect-mark">★</span></td>
+              <td class="mono ver-badge">3.0.0.7</td>
+              <td class="role-text">機体状態・サービス管理</td>
+              <td><span class="status-pill status-on">稼働中</span></td>
+            </tr>
+            <tr>
+              <td class="mono">ai_sport</td>
+              <td class="mono ver-badge">1.0.2.153</td>
+              <td class="role-text">歩行・姿勢制御コア</td>
+              <td><span class="status-pill status-on">稼働中</span></td>
+            </tr>
+            <tr>
+              <td class="mono">r1_arm_example</td>
+              <td class="mono ver-badge">1.0.2.0</td>
+              <td class="role-text">R1 アーム動作制御</td>
+              <td><span class="status-pill status-on">稼働中</span></td>
+            </tr>
+            <tr>
+              <td class="mono">motion_switcher</td>
+              <td class="mono ver-badge">1.0.0.1</td>
+              <td class="role-text">制御モード切替</td>
+              <td><span class="status-pill status-on">稼働中</span></td>
+            </tr>
+            <tr>
+              <td class="mono">state_estimator</td>
+              <td class="mono ver-badge">1.0.0.1</td>
+              <td class="role-text">自己姿勢・状態推定</td>
+              <td><span class="status-pill status-on">稼働中</span></td>
+            </tr>
+            <tr>
+              <td class="mono">vui_service</td>
+              <td class="mono ver-badge">2.2.0.19</td>
+              <td class="role-text">音声・LED 制御</td>
+              <td><span class="status-pill status-on">稼働中</span></td>
+            </tr>
+            <tr>
+              <td class="mono">chat_go</td>
+              <td class="mono ver-badge">1.9.2.89</td>
+              <td class="role-text">音声対話エンジン</td>
+              <td><span class="status-pill status-on">稼働中</span></td>
+            </tr>
+            <tr>
+              <td class="mono">video_hub</td>
+              <td class="mono ver-badge">1.0.0.11</td>
+              <td class="role-text">カメラ映像配信ハブ</td>
+              <td><span class="status-pill status-on">稼働中</span></td>
+            </tr>
+            <tr>
+              <td class="mono">webrtc_bridge<span class="protect-mark">★</span></td>
+              <td class="mono ver-badge">1.0.1.3</td>
+              <td class="role-text">WebRTC ↔ DDS ブリッジ</td>
+              <td><span class="status-pill status-on">稼働中</span></td>
+            </tr>
+            <tr>
+              <td class="mono">net_switcher</td>
+              <td class="mono ver-badge">1.0.2.1</td>
+              <td class="role-text">ネットワーク切替管理</td>
+              <td><span class="status-pill status-on">稼働中</span></td>
+            </tr>
+            <tr>
+              <td class="mono">ros_bridge</td>
+              <td class="mono ver-badge">1.0.0.3</td>
+              <td class="role-text">ROS 2 通信ブリッジ</td>
+              <td><span class="status-pill status-on">稼働中</span></td>
+            </tr>
+            <tr>
+              <td class="mono">robot_type_service</td>
+              <td class="mono ver-badge">1.0.0.3</td>
+              <td class="role-text">機体種別応答</td>
+              <td><span class="status-pill status-on">稼働中</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Right 13 rows: Remaining Versioned & System Daemons -->
+      <div class="svc-col">
+        <table class="svc-table">
+          <thead>
+            <tr>
+              <th style="width:43%">サービス / モジュール名</th>
+              <th style="width:15%">バージョン</th>
+              <th style="width:28%">主な役割</th>
+              <th style="width:14%">状態</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="mono">log_system</td>
+              <td class="mono ver-badge">1.0.0.3</td>
+              <td class="role-text">システムログ収集</td>
+              <td><span class="status-pill status-on">稼働中</span></td>
+            </tr>
+            <tr>
+              <td class="mono">bashrunner</td>
+              <td class="mono ver-badge">1.0.0.1</td>
+              <td class="role-text">スクリプト実行</td>
+              <td><span class="status-pill status-on">稼働中</span></td>
+            </tr>
+            <tr>
+              <td class="mono">system_journal</td>
+              <td class="mono ver-badge">1.0.0.1</td>
+              <td class="role-text">ジャーナル監視</td>
+              <td><span class="status-pill status-on">稼働中</span></td>
+            </tr>
+            <tr>
+              <td class="mono">battery_guard</td>
+              <td class="mono ver-badge">1.0.0.0</td>
+              <td class="role-text">バッテリー保護監視</td>
+              <td><span class="status-pill status-on">稼働中</span></td>
+            </tr>
+            <tr>
+              <td class="mono">stereo_patch_pc1</td>
+              <td class="mono ver-badge">0.4.0.0</td>
+              <td class="role-text">ステレオカメラパッチ</td>
+              <td><span class="status-pill status-off">待機</span></td>
+            </tr>
+            <tr>
+              <td class="mono">webrtc_signal_server<span class="protect-mark">★</span></td>
+              <td class="mono ver-empty">—</td>
+              <td class="role-text">WebRTC シグナリング</td>
+              <td><span class="status-pill status-on">稼働中</span></td>
+            </tr>
+            <tr>
+              <td class="mono">webrtc_multicast_responder</td>
+              <td class="mono ver-empty">—</td>
+              <td class="role-text">機体検出応答デーモン</td>
+              <td><span class="status-pill status-on">稼働中</span></td>
+            </tr>
+            <tr>
+              <td class="mono">videohub_rtsp_server</td>
+              <td class="mono ver-empty">—</td>
+              <td class="role-text">RTSP 映像配信</td>
+              <td><span class="status-pill status-on">稼働中</span></td>
+            </tr>
+            <tr>
+              <td class="mono">audio_player_service</td>
+              <td class="mono ver-empty">—</td>
+              <td class="role-text">音声再生サービス</td>
+              <td><span class="status-pill status-on">稼働中</span></td>
+            </tr>
+            <tr>
+              <td class="mono">ota_pipe</td>
+              <td class="mono ver-empty">—</td>
+              <td class="role-text">OTA パイプデーモン</td>
+              <td><span class="status-pill status-on">稼働中</span></td>
+            </tr>
+            <tr>
+              <td class="mono">ota_box</td>
+              <td class="mono ver-empty">—</td>
+              <td class="role-text">OTA 更新実行管理</td>
+              <td><span class="status-pill status-off">待機</span></td>
+            </tr>
+            <tr>
+              <td class="mono">auto_test_arm</td>
+              <td class="mono ver-empty">—</td>
+              <td class="role-text">アーム自動検査用</td>
+              <td><span class="status-pill status-off">待機</span></td>
+            </tr>
+            <tr>
+              <td class="mono">auto_test_low</td>
+              <td class="mono ver-empty">—</td>
+              <td class="role-text">低レベル自動検査用</td>
+              <td><span class="status-pill status-off">待機</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. Footer -->
+  <div class="footer">
+    <div>取得元: CycloneDDS (<span class="mono">rt/api/bashrunner</span>, <span class="mono">rt/servicestate</span>, <span class="mono">rt/lf/lowstate</span>, <span class="mono">rt/lf/bmsstate</span>) および PC4 (<span class="mono">/unitree/robot/pkg/version/version.json</span>)</div>
+    <div class="mono" style="white-space: nowrap;">R1_05387 | SN: E39N4000Q6RC1M8S</div>
+  </div>
+
+</div>
+</body>
+</html>
