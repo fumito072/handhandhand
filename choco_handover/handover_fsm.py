@@ -15,6 +15,7 @@ import numpy as np
 from choco_perception import ChocoShape3D
 from config import ConfigStore
 from flight_recorder import FlightRecorderSession
+from hd_hand_servo import HandChocoObservation, observe_hand_vs_choco, torso_to_hd_px
 from kinematics import CARRY_READY_LEFT, CARRY_READY_RIGHT, REST_ARM_POSE, R1Kinematics
 from palm_gesture import PalmGestureStatus
 from r1_client import R1BridgeClient
@@ -564,8 +565,13 @@ class HandoverOrchestrator:
         label: str,
         replace: bool = False,
         table_z_floor: Optional[float] = None,
+        max_speed: Optional[float] = None,
     ):
-        """r1_arm_daemon へ軌道指令を送り、実機が目標姿勢に到達 (`stage == 'holding'`) するまで安全監視つきで待機する。"""
+        """r1_arm_daemon へ軌道指令を送り、実機が目標姿勢に到達 (`stage == 'holding'`) するまで安全監視つきで待機する。
+
+        max_speed: 空中区間だけで使う関節速度上限 [rad/s]。None ならデーモン既定の 0.15 rad/s。
+        """
+        extra = {"max_speed": float(max_speed)} if max_speed is not None else {}
         await self.client.send_command(
             "arm_move",
             q=q,
@@ -574,6 +580,7 @@ class HandoverOrchestrator:
             label=label,
             replace=replace,
             table_z_floor=table_z_floor,
+            **extra,
         )
         await self._sleep_checked(0.35)
         deadline = time.monotonic() + max(duration * 3.5, 18.0)
@@ -622,18 +629,193 @@ class HandoverOrchestrator:
                 return
             await asyncio.sleep(0.10)
 
-    async def _wait_hand_grasp_settled(self, side: str, timeout_s: float = 6.5) -> str:
+    async def _wait_hand_grasp_settled(
+        self, side: str, timeout_s: float = 6.5, prox_peak: Optional[List[float]] = None
+    ) -> str:
+        """把持ポリシーの完了を待つ。prox_peak を渡すと、閉じている間の各指の近接値の最大値を記録する。"""
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
             if self._abort_flag:
                 raise asyncio.CancelledError("Aborted")
             hands = self.client.latest_telemetry.get("hands", {})
-            g = (hands.get(side) or {}).get("grasp") or {}
+            hs = hands.get(side) or {}
+            if prox_peak is not None:
+                for i, f in enumerate(((hs.get("tactile") or {}).get("fingers")) or []):
+                    if i < len(prox_peak):
+                        prox_peak[i] = max(prox_peak[i], float(f.get("proximity") or 0.0))
+            g = hs.get("grasp") or {}
             st = g.get("stage", "")
             if st in ("holding", "paused"):
                 return st
             await asyncio.sleep(0.12)
         return "timeout"
+
+    async def _fresh_hd_frame(self, not_before: float, timeout_s: float = 3.5) -> Optional[np.ndarray]:
+        """撮影時刻 (R1 側の time.time()) が not_before 以降の HD フレームを待って返す。"""
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            hd = self.client.latest_hd
+            if hd is not None and float(hd[1]) >= not_before:
+                return hd[0].copy()
+            await self._sleep_checked(0.08)
+        return None
+
+    async def _hd_hand_choco_check(
+        self,
+        tag: str,
+        recorder: FlightRecorderSession,
+        hd_ref: Optional[np.ndarray],
+        choco_prior_px,
+        grasp_pos: np.ndarray,
+        pinch_axis_xy: np.ndarray,
+        z_table: float,
+        thumb_z: float,
+    ) -> Optional[HandChocoObservation]:
+        """腕が止まったあとの HD 画像で、親指の先とチョコの相対ずれを測る (ログにも残す)。"""
+        cfg = self.store.cfg
+        if hd_ref is None or choco_prior_px is None:
+            return None
+        # HD は約 4fps・遅れ約 0.8 秒。R1 の時計は Mac より約 0.2 秒進んでいるため余裕を持って待つ
+        img = await self._fresh_hd_frame(time.time() + 0.45)
+        if img is None:
+            recorder.log_event("hd_hand_check", tag=tag, valid=False, reason="新しい HD フレームが来ない")
+            return None
+        hp, hy = self.latest_head_angles
+        obs = observe_hand_vs_choco(
+            img, hd_ref, grasp_pos, pinch_axis_xy, z_table, choco_prior_px,
+            float(cfg.hd_servo_choco_height_m), self.kin, hp, hy, cfg, thumb_z=thumb_z,
+        )
+        recorder.log_event(
+            "hd_hand_check", tag=tag, valid=obs.valid, reason=obs.reason,
+            thumb_px=obs.thumb_px, thumb_pred_px=obs.thumb_pred_px, choco_px=obs.choco_px,
+            shift_xy_m=obs.shift_xy_m, along_mm=obs.along_mm, across_mm=obs.across_mm,
+        )
+        recorder.save_keyframe(f"hd_check_{tag}", hd_tuple=(img, time.time()))
+        return obs
+
+    async def _probe_table_height(
+        self,
+        side: str,
+        probe_xy,
+        z_start: float,
+        z_bottom: float,
+        act_yaw: float,
+        q_seed: List[float],
+        q10_base: List[float],
+        cmd_aux: List[float],
+        table_z_floor: float,
+        recorder: FlightRecorderSession,
+    ) -> Optional[float]:
+        """チョコの横の何もない机面へ指先を真下に降ろし、机に触れたときの TCP 高さ (胴体座標) を返す。
+
+        触れたら (外乱トルク or エンコーダ停止) すぐ真上の z_start へ戻る。触れなければ None。
+        """
+        cfg = self.store.cfg
+        tcp_off = self.kin.active_tcp_offset(cfg, posture="surface_pinch")
+        start = self.kin.clamp_workspace(np.array([probe_xy[0], probe_xy[1], z_start], dtype=np.float64), side, cfg)
+        bottom = self.kin.clamp_workspace(np.array([probe_xy[0], probe_xy[1], z_bottom], dtype=np.float64), side, cfg)
+        q5_start, _, _, _ = self.kin.solve_oriented_pinch_ik(side, start, act_yaw, cfg, q_seed=q_seed)
+        q10_start = self.kin.merge_single_arm(q10_base, side, q5_start)
+        await self._move_and_wait(q10_start, cmd_aux, 1.8, "table_probe_hover")
+        await self._sleep_checked(0.35)
+
+        arm_base_idx = 0 if side == "left" else 5
+        text_s = []
+        for _ in range(5):
+            te = (self.client.latest_telemetry.get("robot") or {}).get("tau_ext")
+            if te and len(te) == 10:
+                text_s.append([float(x) for x in te])
+            await self._sleep_checked(0.05)
+        tau_base = np.median(text_s, axis=0).tolist() if text_s else None
+        thr = float(getattr(cfg, "tau_ext_contact_nm", 0.68))
+
+        path, _, _ = self.kin.plan_cartesian_ik_path(
+            side, start, bottom, act_yaw, cfg, q10_start, q_seed=q5_start, step_m=0.0025
+        )
+        await self.client.send_command(
+            "arm_move_path", q_path=path, aux=cmd_aux, duration=5.0,
+            label="table_probe_down", replace=True, table_z_floor=table_z_floor,
+        )
+        t0 = time.monotonic()
+        z_hist: List[tuple] = []
+        z_hit: Optional[float] = None
+        src = "none"
+        seen = False
+        q5_now = list(q5_start)
+        cur_z = float(start[2])
+        while time.monotonic() - t0 < 12.0:
+            await self._sleep_checked(0.04)
+            el = time.monotonic() - t0
+            rob = self.client.latest_telemetry.get("robot") or {}
+            st = rob.get("stage", "")
+            if st == "table_probe_down":
+                seen = True
+            if not rob.get("engaged", True) or st in ("fault_hold", "damped_estop", "fault_stale_lowstate"):
+                fault = rob.get("last_fault") or st or "安全ガード作動"
+                raise RuntimeError(f"安全保護によりアームをソフトホールド停止しました ({fault})")
+            q_arm = rob.get("q_arm")
+            if q_arm and len(q_arm) == 10:
+                q5_now = list(q_arm[:5] if side == "left" else q_arm[5:10])
+                tcp, _ = self.kin.arm_fk(side, q5_now, tcp_off)
+                cur_z = float(tcp[2])
+            z_hist.append((el, cur_z))
+            gate = cur_z <= float(start[2]) - 0.010
+            te = rob.get("tau_ext")
+            if tau_base is not None and te and len(te) == 10:
+                dtau = max(
+                    abs(float(te[arm_base_idx]) - tau_base[arm_base_idx]),
+                    abs(float(te[arm_base_idx + 3]) - tau_base[arm_base_idx + 3]),
+                )
+                if el >= 0.45 and gate and dtau >= thr:
+                    z_hit, src = cur_z, "tau_ext"
+                    break
+            if el >= 1.10 and st == "table_probe_down" and gate:
+                older = [z for t, z in z_hist if (el - t) >= 0.45]
+                if older and (older[-1] - cur_z) < 0.0008:
+                    z_hit, src = cur_z, "encoder_stall"
+                    break
+            if (seen and st == "holding") or (el >= 3.5 and st == "holding"):
+                break
+
+        # 触れた位置 (または下限) から真上の開始高さへ直線で戻る
+        here = np.array([start[0], start[1], cur_z], dtype=np.float64)
+        q10_here = self.kin.merge_single_arm(q10_start, side, q5_now)
+        up, _, _ = self.kin.plan_cartesian_ik_path(side, here, start, act_yaw, cfg, q10_here, q_seed=q5_now, step_m=0.0035)
+        await self._move_path_and_wait(up, cmd_aux, 1.6, "table_probe_up", replace=True)
+        recorder.log_event(
+            "table_probe",
+            xy_m=[round(float(start[0]), 4), round(float(start[1]), 4)],
+            z_touch_m=(round(float(z_hit), 4) if z_hit is not None else None),
+            source=src,
+        )
+        return z_hit
+
+    def _shifted_pinch_targets(
+        self, side: str, grasp_pos, lift_pos, q_grasp, q10_pre, act_yaw: float, shift_xy, hover_z: float
+    ):
+        """把持目標を水平に shift_xy [m] ずらし、ホバー位置・持ち上げ位置と IK を解き直す。"""
+        cfg = self.store.cfg
+        sx, sy = float(shift_xy[0]), float(shift_xy[1])
+        grasp_pos = self.kin.clamp_workspace(
+            np.array([grasp_pos[0] + sx, grasp_pos[1] + sy, grasp_pos[2]], dtype=np.float64), side, cfg
+        )
+        side_stage_pos = self.kin.clamp_workspace(
+            np.array([grasp_pos[0], grasp_pos[1], hover_z], dtype=np.float64), side, cfg
+        )
+        lift_pos = self.kin.clamp_workspace(lift_pos + np.array([sx, sy, 0.0], dtype=np.float64), side, cfg)
+        q_grasp, err_grasp, _, _ = self.kin.solve_oriented_pinch_ik(side, grasp_pos, act_yaw, cfg, q_seed=q_grasp)
+        q_side_stage, _, _, _ = self.kin.solve_oriented_pinch_ik(side, side_stage_pos, act_yaw, cfg, q_seed=q_grasp)
+        q10_side_stage = self.kin.merge_single_arm(q10_pre, side, q_side_stage)
+        q10_grasp = self.kin.merge_single_arm(q10_side_stage, side, q_grasp)
+        return grasp_pos, side_stage_pos, lift_pos, q_grasp, q_side_stage, q10_side_stage, q10_grasp, err_grasp
+
+    def _pinch_axis_xy(self, side: str, q5: List[float], tcp_off) -> np.ndarray:
+        """現在の腕姿勢での 親指→人差指 パッド軸を胴体座標の水平面 (XY) に射影した単位ベクトル。"""
+        _, R = self.kin.arm_fk(side, list(q5), tcp_off)
+        a = self.kin.pinch_axis_world(R, side=side)
+        v = np.array([float(a[0]), float(a[1])], dtype=np.float64)
+        n = float(np.linalg.norm(v))
+        return v / n if n > 1e-6 else np.array([1.0, 0.0], dtype=np.float64)
 
     def _plan_pinch_waypoints(
         self,
@@ -659,6 +841,11 @@ class HandoverOrchestrator:
             probe_pt = np.array(
                 [choco.centroid_torso_m[0], choco.centroid_torso_m[1], z_table + 0.001], dtype=np.float64
             )
+            forced = str(getattr(cfg, "force_side", "auto"))
+            if forced in ("left", "right"):
+                allowed = (forced,)
+            else:
+                allowed = (side,) if lock_side else None
             plan6 = self.kin.choose_oriented_pinch_plan_6dof(
                 probe_pt,
                 float(choco.yaw_deg),
@@ -666,7 +853,7 @@ class HandoverOrchestrator:
                 float(choco.width_mm),
                 cfg,
                 current_waist_yaw=current_waist_yaw,
-                allowed_sides=((side,) if lock_side else None),
+                allowed_sides=allowed,
             )
             side = str(plan6["side"])
             waist_yaw_cmd = float(plan6["waist_yaw_cmd"])
@@ -864,6 +1051,8 @@ class HandoverOrchestrator:
             hd_tuple=self.client.latest_hd,
             fallback_left_bgr=self.latest_left_bgr,
         )
+        # 手とチョコの相対位置補正 (hd_hand_servo) 用: 腕が視野に入る前の HD 画像を背景として保持する
+        hd_ref_bgr = self.client.latest_hd[0].copy() if self.client.latest_hd is not None else None
         outcome = {
             "trigger_source": trigger_source,
             "posture": posture,
@@ -928,6 +1117,7 @@ class HandoverOrchestrator:
             # Step 1: ハンドを表面拘束またぎ開き (~66mm) / 記憶プロファイルに合わせて事前準備 & 重力補償つきエンゲージ
             active_prof = self.profile_store.get_active_for_grasp()
             mode_desc = "宙吊り脚0Nm＋重力補償モード" if cfg.use_suspended_mode else "立位重力補償安全制御"
+            reopen_in_air = False
             if (
                 active_prof
                 and len(active_prof.get("pre_open_positions", [])) == 6
@@ -946,15 +1136,19 @@ class HandoverOrchestrator:
                     "PREPARE_HAND_AND_ARM",
                     f"{side_ja} を{posture_ja}形状 (thumb_aux={thumb_aux}) へ事前オープンし {mode_desc} を開始",
                 )
+                # 3指モードは人差指・中指を 450 まで約400カウント動かすため、900ms では途中で打ち切られる (実測 384/254)。
+                # Revo 2 の位置＋時間指令 (レジスタ1010) は 2000ms が上限 (2500ms は Modbus exception 3 で拒否)。
                 await self.client.send_command(
                     "hand_open",
                     side=side,
                     pre_open_amount=choco.pre_open_amount,
-                    duration_ms=900,
+                    duration_ms=2000,
                     posture=open_posture,
                     two_finger_only=(cfg.two_finger_pinch if (is_surface_pinch or is_cpinch) else False),
                     thumb_aux=thumb_aux,
                 )
+                # 腕を下ろした待機姿勢では中指が体側に当たり ~395 で止まるため、上空でもう一度開き直す
+                reopen_in_air = bool(is_surface_pinch and not cfg.two_finger_pinch)
 
             table_z_floor = float(max(-0.16, min(0.12, z_table - 0.036)))
             r_eng = await self.client.send_command(
@@ -1000,10 +1194,25 @@ class HandoverOrchestrator:
             q10_grasp = self.kin.merge_single_arm(q10_side_stage, side, q_grasp)
 
             self._set_phase("APPROACH_ABOVE_CHOCO", f"天板3D包絡との干渉ゼロ経路で対象斜め上空へ移動中 ({posture_ja})")
-            await self._move_and_wait(wp0, cur_aux, 2.2, "side_clear", replace=True)
-            await self._move_and_wait(wp1, cur_aux, 3.0, "lift_behind_desk")
-            await self._move_and_wait(wp2, cmd_aux, 2.6, "swing_over_desk")
-            await self._move_and_wait(q10_pre, cmd_aux, 2.1, "above_choco")
+            v_air = float(cfg.approach_max_speed_rad_s)
+            v_final = float(cfg.approach_final_max_speed_rad_s)
+            await self._move_and_wait(wp0, cur_aux, 2.2, "side_clear", replace=True, max_speed=v_air)
+            await self._move_and_wait(wp1, cur_aux, 3.0, "lift_behind_desk", max_speed=v_air)
+            await self._move_and_wait(wp2, cmd_aux, 2.6, "swing_over_desk", max_speed=v_air)
+            await self._move_and_wait(q10_pre, cmd_aux, 2.1, "above_choco", max_speed=v_final)
+
+            if reopen_in_air:
+                # 机上空 (指先の周りに何もない位置) で形C [.., 450, 450, ..] を再指令し、人差指・中指を確実に曲げ切る
+                await self.client.send_command(
+                    "hand_open",
+                    side=side,
+                    pre_open_amount=choco.pre_open_amount,
+                    duration_ms=2000,
+                    posture="surface_pinch",
+                    two_finger_only=False,
+                    thumb_aux=thumb_aux,
+                )
+                await self._sleep_checked(2.1)
 
             # Step 2.5: 斜め上空(カメラ死角ゼロ)からの HD 光線×3D平面交差 閉ループ再ロック (固定座標ベンチマーク時はスキップ)
             if cfg.enable_visual_servo and trigger_source != "fixed_benchmark":
@@ -1147,417 +1356,658 @@ class HandoverOrchestrator:
                             )
                             await self._move_and_wait(q10_pre, cmd_aux, 1.6, "visual_servo_align")
 
-            # Step 3: アプローチ方式分岐
-            #   [A] surface_pinch (最優先推奨): 対象真上 (+45mm) で ~66mm 開口またぎ → 手先直線補間で真下へ微速下降
-            #       → (触覚 / 外乱トルク tau_ext / 着地ストール) で机面確定 → +0.8mm 微小除荷 → 机面ガイド自己調心ピンチ
-            if is_surface_pinch:
-                tcp_off = self.kin.active_tcp_offset(cfg, posture="surface_pinch")
-                hover_mm = (float(side_stage_pos[2]) - z_table) * 1000.0
-                self._set_phase(
-                    "STRADDLE_HOVER",
-                    f"対象真上 +{hover_mm:.0f}mm へ移動し、約66mm開口で対象を跨いで触覚・外乱トルク基準値を取得中 (把持角 {act_yaw:+.0f}°)",
+            # Step 3〜4 を近接センサー判定つきで最大 prox_max_attempts 回まで試す (surface_pinch のみ)。
+            # 空振りしたら、下降〜閉じる間の各指の近接値ピークから「チョコがどの指の側にあるか」を推定して手をずらす。
+            prox_thr = float(getattr(cfg, "prox_object_threshold", 200000.0))
+            max_attempts = max(1, int(getattr(cfg, "prox_max_attempts", 3))) if is_surface_pinch else 1
+            attempt_i = 0
+            search_k = 0
+            outcome["attempts"] = []
+            # HD 画像による手とチョコの相対位置補正の準備 (チョコの画素位置は毎回の観測で更新する)
+            hd_servo_on = bool(getattr(cfg, "hd_servo_enable", True)) and is_surface_pinch and hd_ref_bgr is not None
+            hd_tol_mm = float(getattr(cfg, "hd_servo_tol_mm", 7.0))
+            hd_cap_mm = float(getattr(cfg, "hd_servo_step_cap_mm", 45.0))
+            choco_prior_px = None
+            if hd_servo_on:
+                if getattr(choco, "hd_obb_px", None):
+                    choco_prior_px = tuple(np.mean(np.asarray(choco.hd_obb_px, dtype=np.float64), axis=0))
+                else:
+                    hp0, hy0 = self.latest_head_angles
+                    pp = torso_to_hd_px(choco.centroid_torso_m, self.kin, hp0, hy0, cfg)
+                    choco_prior_px = tuple(pp) if pp is not None else None
+            hd_touch_ok = False
+
+            # 机面の高さを手で実測する: チョコの横 (腕の側) の何もない机面へ指先を降ろし、触れた TCP 高さを以後の基準にする。
+            # ステレオ推定の机高さは試行ごとに ±2cm 以上ぶれ、チョコの上で閉じてしまう原因になっていた。
+            table_probed = False
+            if is_surface_pinch and bool(getattr(cfg, "table_probe_enable", True)):
+                off_p = float(getattr(cfg, "table_probe_offset_m", 0.07))
+                probe_xy = np.array(
+                    [grasp_pos[0], grasp_pos[1] + (-off_p if side == "right" else off_p)], dtype=np.float64
                 )
-                await self._move_and_wait(q10_side_stage, cmd_aux, 1.8, "straddle_hover")
-                await self._sleep_checked(0.35)
+                if table_bbox:
+                    probe_xy[0] = float(np.clip(probe_xy[0], table_bbox["x_min"] + 0.04, table_bbox["x_max"] - 0.04))
+                    probe_xy[1] = float(np.clip(probe_xy[1], table_bbox["y_min"] + 0.04, table_bbox["y_max"] - 0.04))
+                self._set_phase("TABLE_PROBE", f"チョコの横 ({off_p * 100:.0f}cm) の机面に指先を当てて、机の高さを実測中")
+                z_touch = await self._probe_table_height(
+                    side, probe_xy, float(side_stage_pos[2]), float(z_table) - 0.030, act_yaw,
+                    list(q_side_stage), q10_pre, cmd_aux, table_z_floor, recorder,
+                )
+                if z_touch is not None:
+                    table_probed = True
+                    dz_mm = (float(z_touch) - float(z_table)) * 1000.0
+                    outcome["z_table_probe_m"] = round(float(z_touch), 4)
+                    z_table = float(z_touch)
+                    relief0 = float(getattr(cfg, "surface_relief_lift_m", 0.0008))
+                    hover0 = max(float(getattr(cfg, "straddle_hover_z_m", 0.045)), 0.045)
+                    grasp_pos = self.kin.clamp_workspace(
+                        np.array([grasp_pos[0], grasp_pos[1], z_table + relief0], dtype=np.float64), side, cfg
+                    )
+                    side_stage_pos = self.kin.clamp_workspace(
+                        np.array([grasp_pos[0], grasp_pos[1], z_table + hover0], dtype=np.float64), side, cfg
+                    )
+                    lift_pos = self.kin.clamp_workspace(
+                        grasp_pos + np.array([-0.015, 0.0, 0.115], dtype=np.float64), side, cfg
+                    )
+                    q_grasp, err_grasp, _, _ = self.kin.solve_oriented_pinch_ik(side, grasp_pos, act_yaw, cfg, q_seed=q_grasp)
+                    q_side_stage, _, _, _ = self.kin.solve_oriented_pinch_ik(
+                        side, side_stage_pos, act_yaw, cfg, q_seed=q_grasp
+                    )
+                    q10_side_stage = self.kin.merge_single_arm(q10_pre, side, q_side_stage)
+                    q10_grasp = self.kin.merge_single_arm(q10_side_stage, side, q_grasp)
+                    self.status.planned_ik_error_mm = round(err_grasp * 1000.0, 1)
+                    table_z_floor = float(max(-0.16, min(0.12, z_table - 0.036)))
+                    await self.client.send_command("arm_set_params", table_z_floor=table_z_floor)
+                    self._set_phase(
+                        "TABLE_PROBE",
+                        f"机の高さを実測: Z={z_table * 1000:.1f}mm (カメラ推定との差 {dz_mm:+.0f}mm)。この高さを基準に掴みます",
+                    )
+
+            while True:
+                attempt_i += 1
+                grasp_prox_peak = [0.0] * 5
+                hd_touch_ok = False
+                # Step 3: アプローチ方式分岐
+                #   [A] surface_pinch (最優先推奨): 対象真上 (+45mm) で ~66mm 開口またぎ → 手先直線補間で真下へ微速下降
+                #       → (触覚 / 外乱トルク tau_ext / 着地ストール) で机面確定 → +0.8mm 微小除荷 → 机面ガイド自己調心ピンチ
+                if is_surface_pinch:
+                    tcp_off = self.kin.active_tcp_offset(cfg, posture="surface_pinch")
+                    hover_mm = (float(side_stage_pos[2]) - z_table) * 1000.0
+                    self._set_phase(
+                        "STRADDLE_HOVER",
+                        f"対象真上 +{hover_mm:.0f}mm へ移動し、約66mm開口で対象を跨いで触覚・外乱トルク基準値を取得中 (把持角 {act_yaw:+.0f}°)",
+                    )
+                    await self._move_and_wait(q10_side_stage, cmd_aux, 1.8, "straddle_hover")
+                    await self._sleep_checked(0.35)
+                    recorder.save_keyframe(
+                        "02_straddle_hover" if attempt_i == 1 else f"02_straddle_hover_try{attempt_i}",
+                        stereo_pair=self.client.latest_stereo,
+                        hd_tuple=self.client.latest_hd,
+                        fallback_left_bgr=self.latest_left_bgr,
+                    )
+
+                    # HD 画像で親指の先とチョコの相対位置を測り、ずれていればホバー高さのまま横へ寄せる (最大2回)
+                    if hd_servo_on:
+                        for hv_i in range(2):
+                            a_xy_h = self._pinch_axis_xy(side, q_side_stage, tcp_off)
+                            thumb_z_h = float(side_stage_pos[2]) - float(cfg.hd_servo_thumb_drop_m)
+                            obs_h = await self._hd_hand_choco_check(
+                                f"hover{attempt_i}_{hv_i}", recorder, hd_ref_bgr, choco_prior_px,
+                                grasp_pos, a_xy_h, z_table, thumb_z_h,
+                            )
+                            if obs_h is None or not obs_h.valid:
+                                break
+                            choco_prior_px = obs_h.choco_px or choco_prior_px
+                            # ホバー中は親指の高さの仮定がずれるため、把持軸方向の推定に +30mm 前後の偏りが出る
+                            # (2026-11-07 実測: ホバー時 +30mm / 着地後 -6〜-12mm)。上空では横方向だけ寄せ、
+                            # 把持軸方向は着地後の測定に任せる (腕が奥へ伸びきって下降経路が崩れるのを防ぐ)。
+                            perp_h = np.array([-a_xy_h[1], a_xy_h[0]], dtype=np.float64)
+                            sh = perp_h * (float(obs_h.across_mm) / 1000.0)
+                            sh_mm = abs(float(obs_h.across_mm))
+                            if sh_mm < hd_tol_mm:
+                                break
+                            if sh_mm > hd_cap_mm:
+                                sh = sh * (hd_cap_mm / sh_mm)
+                            self._set_phase(
+                                "HD_ALIGN",
+                                f"カメラで手とチョコのずれ (軸方向 {obs_h.along_mm:+.0f}mm / 横 {obs_h.across_mm:+.0f}mm) を検出 "
+                                f"→ 上空のまま {min(sh_mm, hd_cap_mm):.0f}mm 寄せます",
+                            )
+                            (grasp_pos, side_stage_pos, lift_pos, q_grasp, q_side_stage,
+                             q10_side_stage, q10_grasp, err_grasp) = self._shifted_pinch_targets(
+                                side, grasp_pos, lift_pos, q_grasp, q10_pre, act_yaw, sh, float(side_stage_pos[2])
+                            )
+                            self.status.planned_ik_error_mm = round(err_grasp * 1000.0, 1)
+                            await self._move_and_wait(q10_side_stage, cmd_aux, 1.2, "hd_align_hover")
+                            await self._sleep_checked(0.3)
+
+                    # 空中静止時の (1) Revo2 5指 [normal_N, tangent_N] 基準値 と (2) アーム外乱トルク tau_ext 基準値を同時計測
+                    norm_s, tan_s, text_s = [], [], []
+                    for _ in range(5):
+                        hands_t = self.client.latest_telemetry.get("hands") or {}
+                        f_list = (((hands_t.get(side) or {}).get("tactile") or {}).get("fingers")) or []
+                        if len(f_list) == 5:
+                            norm_s.append([float(f.get("normal_N", 0.0)) for f in f_list])
+                            tan_s.append([float(f.get("tangent_N", 0.0)) for f in f_list])
+                        rob_t = self.client.latest_telemetry.get("robot") or {}
+                        te_list = rob_t.get("tau_ext")
+                        if te_list and len(te_list) == 10:
+                            text_s.append([float(x) for x in te_list])
+                        await self._sleep_checked(0.05)
+
+                    norm_base = np.median(norm_s, axis=0).tolist() if norm_s else [0.0] * 5
+                    tan_base = np.median(tan_s, axis=0).tolist() if tan_s else [0.0] * 5
+                    tau_ext_base = np.median(text_s, axis=0).tolist() if text_s else [0.0] * 10
+                    arm_base_idx = 0 if side == "left" else 5
+                    tau_ext_thresh = float(getattr(cfg, "tau_ext_contact_nm", 0.68))
+
+                    # 対象真上から z_table - 22mm まで 2.5mm 刻みの完全垂直デカルト直線 IK パスを生成して ~12.4mm/s で降下
+                    probe_bot_pos = self.kin.clamp_workspace(
+                        np.array([grasp_pos[0], grasp_pos[1], z_table - 0.022], dtype=np.float64),
+                        side,
+                        cfg,
+                    )
+                    q10_descend_path, _, max_line_dev = self.kin.plan_cartesian_ik_path(
+                        side,
+                        side_stage_pos,
+                        probe_bot_pos,
+                        act_yaw,
+                        cfg,
+                        q10_side_stage,
+                        q_seed=q_side_stage,
+                        step_m=0.0025,
+                    )
+                    self._set_phase(
+                        "TOUCHOFF_STRADDLE",
+                        f"対象を跨いだまま真下へ直線微速下降中 (直線偏差 {max_line_dev*1000:.2f}mm / 触覚・外乱トルク・着地監視)...",
+                    )
+                    await self.client.send_command(
+                        "arm_move_path",
+                        q_path=q10_descend_path,
+                        aux=cmd_aux,
+                        duration=5.4,
+                        label="touchoff_straddle",
+                        replace=True,
+                        table_z_floor=table_z_floor,
+                    )
+
+                    t_probe0 = time.monotonic()
+                    z_surface: Optional[float] = None
+                    touchdown_source = "fallback_bottom"
+                    touch_info = ""
+                    z_hist: List[tuple[float, float]] = []
+                    q5_now = list(q_side_stage)
+                    cur_z = float(side_stage_pos[2])
+                    seen_touchoff = False
+                    z_gate_hi = min(float(side_stage_pos[2]) - 0.014, z_table + 0.036)
+
+                    while time.monotonic() - t_probe0 < 15.0:
+                        await self._sleep_checked(0.04)
+                        el_p = time.monotonic() - t_probe0
+                        rob_p = self.client.latest_telemetry.get("robot") or {}
+                        st_p = rob_p.get("stage", "")
+                        if st_p == "touchoff_straddle":
+                            seen_touchoff = True
+                        if not rob_p.get("engaged", True) or st_p in ("fault_hold", "damped_estop", "fault_stale_lowstate"):
+                            fault = rob_p.get("last_fault") or st_p or "安全ガード作動"
+                            raise RuntimeError(f"安全保護によりアームをソフトホールド停止しました ({fault})")
+
+                        q_arm_now = rob_p.get("q_arm") or q10_side_stage
+                        q5_now = list(q_arm_now[:5] if side == "left" else q_arm_now[5:10])
+                        cur_tcp, _ = self.kin.arm_fk(side, q5_now, tcp_off)
+                        cur_z = float(cur_tcp[2])
+                        z_hist.append((el_p, cur_z))
+
+                        # (A) 指先触覚センサー検知 (親指0・人差指1・中指2は高感度 0.045N、他指も安全のため 0.065N で監視)
+                        hands_p = self.client.latest_telemetry.get("hands") or {}
+                        fl_p = (((hands_p.get(side) or {}).get("tactile") or {}).get("fingers")) or []
+                        # 近接値ピークを記録 (空振り時に「チョコがどの指の側にあったか」の判定に使う)
+                        for _pi, _pf in enumerate(fl_p[:5]):
+                            grasp_prox_peak[_pi] = max(grasp_prox_peak[_pi], float(_pf.get("proximity") or 0.0))
+                        dn_pinch = dtan_pinch = dn_all = 0.0
+                        pinch_ids = (0, 1) if cfg.two_finger_pinch else (0, 1, 2)
+                        if len(fl_p) == 5:
+                            dn_pinch = max(abs(float(fl_p[i].get("normal_N", 0.0)) - norm_base[i]) for i in pinch_ids)
+                            dtan_pinch = max(abs(float(fl_p[i].get("tangent_N", 0.0)) - tan_base[i]) for i in pinch_ids)
+                            dn_all = max(abs(float(fl_p[i].get("normal_N", 0.0)) - norm_base[i]) for i in range(5))
+                        tactile_hit = (
+                            el_p >= 0.35
+                            and cur_z <= z_gate_hi
+                            and (dn_pinch >= 0.045 or dtan_pinch >= 0.055 or dn_all >= 0.065)
+                        )
+
+                        # (B) 外乱トルクオブザーバ検知 (|tau_ext - tau_ext_base| が肩ピッチまたは肘で閾値到達)
+                        te_now = rob_p.get("tau_ext")
+                        dtau_active = 0.0
+                        if te_now and len(te_now) == 10 and text_s:
+                            dtau_sp = abs(float(te_now[arm_base_idx + 0]) - tau_ext_base[arm_base_idx + 0])
+                            dtau_el = abs(float(te_now[arm_base_idx + 3]) - tau_ext_base[arm_base_idx + 3])
+                            dtau_active = max(dtau_sp, dtau_el)
+                        tau_ext_hit = (
+                            el_p >= 0.45
+                            and cur_z <= z_gate_hi
+                            and dtau_active >= tau_ext_thresh
+                        )
+
+                        # (C) エンコーダ Z 降下ストール検知
+                        stall_hit = False
+                        if el_p >= 1.10 and st_p == "touchoff_straddle" and cur_z <= z_gate_hi:
+                            older = [z for t, z in z_hist if (el_p - t) >= 0.45]
+                            if older and (older[-1] - cur_z) < 0.0008:
+                                stall_hit = True
+
+                        if tactile_hit or tau_ext_hit or stall_hit:
+                            z_surface = cur_z
+                            if tactile_hit:
+                                touchdown_source = "tactile"
+                                trig_ja = "指先触覚"
+                            elif tau_ext_hit:
+                                touchdown_source = "tau_ext"
+                                trig_ja = "外乱トルク"
+                            else:
+                                touchdown_source = "encoder_stall"
+                                trig_ja = "着地ストール"
+                            touch_info = (
+                                f"{trig_ja} Z={z_surface*1000:.1f}mm "
+                                f"(ΔFn={dn_pinch:.2f}N, Δτ={dtau_active:.2f}Nm)"
+                            )
+                            break
+
+                        if (seen_touchoff and st_p == "holding") or (el_p >= 3.5 and st_p == "holding"):
+                            break
+
+                    # 実測した机より明らかに高い所で止まった = 指がチョコ等の上に乗った (このまま閉じると空を掴む)
+                    high_m = float(getattr(cfg, "table_probe_high_landing_m", 0.006))
+                    landed_high = bool(table_probed and z_surface is not None and float(z_surface) > z_table + high_m)
+                    if landed_high:
+                        recorder.log_event(
+                            "landed_high", attempt=attempt_i,
+                            z_surface_m=round(float(z_surface), 4), z_table_probe_m=round(float(z_table), 4),
+                        )
+
+                    # +0.8mm 微小除荷を最優先で即時送信し、画像保存中の天板への押し込みをゼロにする
+                    relief_m = float(getattr(cfg, "surface_relief_lift_m", 0.0008))
+                    rob_g = self.client.latest_telemetry.get("robot") or {}
+                    pd_trim = 0.0007 if float(rob_g.get("grav_ff_gain") or 0.0) > 0.3 else 0.0020
+                    z_ref_surf = z_surface if z_surface is not None else cur_z
+                    z_goal_relief = z_ref_surf + relief_m
+                    z_cmd_relief = z_goal_relief + pd_trim
+
+                    grasp_pos = self.kin.clamp_workspace(
+                        np.array([grasp_pos[0], grasp_pos[1], z_cmd_relief], dtype=np.float64), side, cfg
+                    )
+                    q_grasp, err_grasp, _, _ = self.kin.solve_oriented_pinch_ik(
+                        side, grasp_pos, act_yaw, cfg, q_seed=q5_now
+                    )
+                    self.status.planned_ik_error_mm = round(err_grasp * 1000.0, 1)
+                    q10_grasp = self.kin.merge_single_arm(q10_side_stage, side, q_grasp)
+                    touch_hdr = f"着地確定[{touch_info}]" if touch_info else f"下限到達(Z={z_ref_surf*1000:.1f}mm)"
+                    self._set_phase(
+                        "SURFACE_MICRO_RELIEF",
+                        f"{touch_hdr} → +{relief_m*1000:.1f}mm 微小除荷し机面ガイド姿勢を保持中",
+                    )
+                    await self._move_and_wait(q10_grasp, cmd_aux, 0.75, "surface_micro_relief", replace=True)
+
+                    outcome["touchdown_source"] = touchdown_source
+                    outcome["z_surface_meas_m"] = round(float(z_ref_surf), 4)
+                    recorder.log_event(
+                        "touchdown",
+                        source=touchdown_source,
+                        z_surface_m=outcome["z_surface_meas_m"],
+                        z_table_est_m=round(z_table, 4),
+                    )
+                    recorder.save_keyframe(
+                        "03_touchdown" if attempt_i == 1 else f"03_touchdown_try{attempt_i}",
+                        stereo_pair=self.client.latest_stereo,
+                        hd_tuple=self.client.latest_hd,
+                        fallback_left_bgr=self.latest_left_bgr,
+                    )
+                    await self._sleep_checked(0.15)
+
+                    # 万一押し付け残り (<-0.4mm) または浮きすぎ (>+2.4mm) があれば 1 回だけ閉ループ微調整する
+                    rob_chk = self.client.latest_telemetry.get("robot") or {}
+                    q_arm_chk = rob_chk.get("q_arm")
+                    if q_arm_chk and len(q_arm_chk) == 10:
+                        q5_chk = q_arm_chk[:5] if side == "left" else q_arm_chk[5:10]
+                        chk_tcp, _ = self.kin.arm_fk(side, q5_chk, tcp_off)
+                        rel_h = float(chk_tcp[2]) - z_ref_surf
+                        if rel_h < -0.0004 or rel_h > 0.0024:
+                            err_z = z_goal_relief - float(chk_tcp[2])
+                            z_cmd_relief = float(np.clip(z_cmd_relief + err_z, z_ref_surf - 0.001, z_ref_surf + 0.008))
+                            grasp_pos = self.kin.clamp_workspace(
+                                np.array([grasp_pos[0], grasp_pos[1], z_cmd_relief], dtype=np.float64), side, cfg
+                            )
+                            q_grasp, _, _, _ = self.kin.solve_oriented_pinch_ik(
+                                side, grasp_pos, act_yaw, cfg, q_seed=q_grasp
+                            )
+                            q10_grasp = self.kin.merge_single_arm(q10_side_stage, side, q_grasp)
+                            await self._move_and_wait(q10_grasp, cmd_aux, 0.65, "trim_micro_relief", replace=True)
+                            await self._sleep_checked(0.12)
+
+                    # 着地後 (指先が机面) にもう一度 HD で測り、ずれていれば閉じずに持ち上げて寄せ直す
+                    if hd_servo_on:
+                        a_xy_t = self._pinch_axis_xy(side, q_grasp, tcp_off)
+                        drop_m = float(cfg.hd_servo_thumb_drop_m)
+                        # チョコを置いた机面は実測値を使う (チョコの上に乗った場合、着地高さは机面ではないため)
+                        z_tab_td = (float(z_table) if table_probed else float(z_ref_surf)) - drop_m
+                        obs_t = await self._hd_hand_choco_check(
+                            f"touch{attempt_i}", recorder, hd_ref_bgr, choco_prior_px,
+                            grasp_pos, a_xy_t, z_tab_td, float(z_ref_surf) - drop_m,
+                        )
+                        if obs_t is not None and obs_t.valid:
+                            choco_prior_px = obs_t.choco_px or choco_prior_px
+                            sh = np.asarray(obs_t.shift_xy_m, dtype=np.float64)
+                            if landed_high:
+                                # 乗ってしまった時は、把持軸方向も控えめにせず測ったずれ全量で寄せる
+                                perp_t = np.array([-a_xy_t[1], a_xy_t[0]], dtype=np.float64)
+                                sh = a_xy_t * (float(obs_t.along_mm) / 1000.0) + perp_t * (float(obs_t.across_mm) / 1000.0)
+                            sh_mm = float(np.hypot(sh[0], sh[1]) * 1000.0)
+                            if sh_mm < hd_tol_mm and not landed_high:
+                                hd_touch_ok = True
+                            elif attempt_i < max_attempts and sh_mm >= 3.0:
+                                if sh_mm > hd_cap_mm:
+                                    sh = sh * (hd_cap_mm / sh_mm)
+                                head_msg = "指がチョコの上に乗った" if landed_high else "着地後もずれ"
+                                self._set_phase(
+                                    "HD_ALIGN",
+                                    f"{head_msg} (軸方向 {obs_t.along_mm:+.0f}mm / 横 {obs_t.across_mm:+.0f}mm) "
+                                    f"→ 閉じずに持ち上げて {min(sh_mm, hd_cap_mm):.0f}mm 寄せ直します ({attempt_i}/{max_attempts})",
+                                )
+                                outcome["attempts"].append({
+                                    "attempt": attempt_i,
+                                    "grasp_xy_m": [round(float(grasp_pos[0]), 4), round(float(grasp_pos[1]), 4)],
+                                    "verified": False,
+                                    "hd_realign_mm": [round(float(sh[0]) * 1000.0, 1), round(float(sh[1]) * 1000.0, 1)],
+                                    "prox_peak": [int(v) for v in grasp_prox_peak],
+                                })
+                                hover_z_hd = max(float(side_stage_pos[2]), float(z_ref_surf) + float(cfg.straddle_hover_z_m))
+                                escape_pos_hd = self.kin.clamp_workspace(
+                                    np.array([grasp_pos[0], grasp_pos[1], hover_z_hd], dtype=np.float64), side, cfg
+                                )
+                                q10_up_hd, _, _ = self.kin.plan_cartesian_ik_path(
+                                    side, grasp_pos, escape_pos_hd, act_yaw, cfg, q10_grasp, q_seed=q_grasp, step_m=0.0035
+                                )
+                                await self._move_path_and_wait(q10_up_hd, cmd_aux, 1.6, "hd_realign_escape", replace=True)
+                                (grasp_pos, side_stage_pos, lift_pos, q_grasp, q_side_stage,
+                                 q10_side_stage, q10_grasp, err_grasp) = self._shifted_pinch_targets(
+                                    side, grasp_pos, lift_pos, q_grasp, q10_pre, act_yaw, sh, hover_z_hd
+                                )
+                                self.status.planned_ik_error_mm = round(err_grasp * 1000.0, 1)
+                                continue
+
+                #   [B] 旧 c_pinch (互換維持): 対象から44mm横の天面タッチオフ → +2.0mm 浮上 → 水平スライド
+                elif is_cpinch and side_entry >= 0.004:
+                    tcp_off = self.kin.active_tcp_offset(cfg, posture="c_pinch")
+                    side_air_pos = self.kin.clamp_workspace(
+                        np.array([side_stage_pos[0], side_stage_pos[1], z_table + 0.036], dtype=np.float64),
+                        side,
+                        cfg,
+                    )
+                    q_side_air, _, _, _ = self.kin.solve_oriented_pinch_ik(
+                        side, side_air_pos, act_yaw, cfg, q_seed=q_pre
+                    )
+                    q10_side_air = self.kin.merge_single_arm(q10_pre, side, q_side_air)
+                    self._set_phase("DESCEND_TO_CHOCO", f"対象脇({side_entry*1000:.0f}mm横) +36mm の空中へ移動し、指先触覚のゼロ点を取得中 (把持角 {act_yaw:+.0f}°)")
+                    await self._move_and_wait(q10_side_air, cmd_aux, 2.0, "descend_side_air")
+                    await self._sleep_checked(0.35)
+
+                    norm_s, tan_s = [], []
+                    for _ in range(5):
+                        hands_t = self.client.latest_telemetry.get("hands") or {}
+                        f_list = (((hands_t.get(side) or {}).get("tactile") or {}).get("fingers")) or []
+                        if len(f_list) == 5:
+                            norm_s.append([float(f.get("normal_N", 0.0)) for f in f_list])
+                            tan_s.append([float(f.get("tangent_N", 0.0)) for f in f_list])
+                        await self._sleep_checked(0.05)
+
+                    norm_base = np.median(norm_s, axis=0).tolist() if norm_s else [0.0] * 5
+                    tan_base = np.median(tan_s, axis=0).tolist() if tan_s else [0.0] * 5
+
+                    probe_bot_pos = self.kin.clamp_workspace(
+                        np.array([side_stage_pos[0], side_stage_pos[1], z_table - 0.020], dtype=np.float64),
+                        side,
+                        cfg,
+                    )
+                    q_probe_bot, _, _, _ = self.kin.solve_oriented_pinch_ik(
+                        side, probe_bot_pos, act_yaw, cfg, q_seed=q_side_air
+                    )
+                    q10_probe_bot = self.kin.merge_single_arm(q10_side_air, side, q_probe_bot)
+                    self._set_phase(
+                        "TOUCHOFF_SURFACE",
+                        "親指・人差指の触覚センサー＋エンコーダ着地検知で天面を微速探索中...",
+                    )
+                    await self.client.send_command(
+                        "arm_move", q=q10_probe_bot, aux=cmd_aux, duration=5.2, label="touchoff_probe", replace=True
+                    )
+
+                    t_probe0 = time.monotonic()
+                    z_surface = None
+                    touch_info = ""
+                    z_hist = []
+                    while time.monotonic() - t_probe0 < 6.2:
+                        await self._sleep_checked(0.04)
+                        el_p = time.monotonic() - t_probe0
+                        rob_p = self.client.latest_telemetry.get("robot") or {}
+                        st_p = rob_p.get("stage", "")
+                        if not rob_p.get("engaged", True) or st_p in ("fault_hold", "damped_estop", "fault_stale_lowstate"):
+                            fault = rob_p.get("last_fault") or st_p or "安全ガード作動"
+                            raise RuntimeError(f"安全保護によりアームをソフトホールド停止しました ({fault})")
+
+                        q_arm_now = rob_p.get("q_arm") or q10_side_air
+                        q5_now = q_arm_now[:5] if side == "left" else q_arm_now[5:10]
+                        cur_tcp, _ = self.kin.arm_fk(side, q5_now, tcp_off)
+                        cur_z = float(cur_tcp[2])
+                        z_hist.append((el_p, cur_z))
+
+                        hands_p = self.client.latest_telemetry.get("hands") or {}
+                        fl_p = (((hands_p.get(side) or {}).get("tactile") or {}).get("fingers")) or []
+                        dn_max = dtan_max = 0.0
+                        if len(fl_p) == 5:
+                            dn_max = max(abs(float(fl_p[i].get("normal_N", 0.0)) - norm_base[i]) for i in range(5))
+                            dtan_max = max(abs(float(fl_p[i].get("tangent_N", 0.0)) - tan_base[i]) for i in range(5))
+
+                        tactile_hit = (
+                            el_p >= 0.35
+                            and cur_z <= (z_table + 0.026)
+                            and (dn_max >= 0.045 or dtan_max >= 0.055)
+                        )
+                        stall_hit = False
+                        if 0.90 <= el_p <= 4.75 and st_p == "touchoff_probe" and cur_z <= (z_table + 0.024):
+                            older = [z for t, z in z_hist if (el_p - t) >= 0.42]
+                            if older and (older[-1] - cur_z) < 0.0008:
+                                stall_hit = True
+
+                        if tactile_hit or stall_hit:
+                            z_surface = cur_z
+                            outcome["touchdown_source"] = "tactile" if tactile_hit else "encoder_stall"
+                            outcome["z_surface_meas_m"] = round(float(z_surface), 4)
+                            trig_src = "触覚" if tactile_hit else "着地停止"
+                            touch_info = f"{trig_src} Z={z_surface*1000:.1f}mm (ΔFn={dn_max:.2f}N, ΔFt={dtan_max:.2f}N)"
+                            break
+
+                        if el_p >= 1.8 and st_p == "holding":
+                            break
+
+                    lift_m = float(getattr(cfg, "cpinch_surface_lift_m", 0.0020))
+                    if z_surface is None:
+                        z_goal_actual = z_table + 0.0030
+                        touch_hdr = f"推定天面({z_table*1000:.1f}mm)"
+                    else:
+                        z_goal_actual = z_surface + lift_m
+                        touch_hdr = f"天面検知[{touch_info}]"
+
+                    rob_g = self.client.latest_telemetry.get("robot") or {}
+                    pd_trim_c = 0.0010 if float(rob_g.get("grav_ff_gain") or 0.0) > 0.3 else 0.0032
+                    z_cmd_clear = z_goal_actual + pd_trim_c
+                    side_stage_pos = self.kin.clamp_workspace(
+                        np.array([side_stage_pos[0], side_stage_pos[1], z_cmd_clear], dtype=np.float64), side, cfg
+                    )
+                    q_side_stage, _, _, _ = self.kin.solve_oriented_pinch_ik(
+                        side, side_stage_pos, act_yaw, cfg, q_seed=q_side_air
+                    )
+                    q10_side_stage = self.kin.merge_single_arm(q10_side_air, side, q_side_stage)
+                    self._set_phase("LIFT_FROM_SURFACE", f"{touch_hdr} → +{lift_m*1000:.1f}mm へ浮かせてクリアランス確保中")
+                    await self._move_and_wait(q10_side_stage, cmd_aux, 1.1, "lift_clear_surface", replace=True)
+                    await self._sleep_checked(0.20)
+
+                    rob_chk = self.client.latest_telemetry.get("robot") or {}
+                    q_arm_chk = rob_chk.get("q_arm")
+                    if q_arm_chk and len(q_arm_chk) == 10:
+                        q5_chk = q_arm_chk[:5] if side == "left" else q_arm_chk[5:10]
+                        chk_tcp, _ = self.kin.arm_fk(side, q5_chk, tcp_off)
+                        err_z = z_goal_actual - float(chk_tcp[2])
+                        if abs(err_z) > 0.0008:
+                            z_cmd_clear = float(np.clip(z_cmd_clear + err_z, z_goal_actual - 0.004, z_goal_actual + 0.016))
+                            side_stage_pos = self.kin.clamp_workspace(
+                                np.array([side_stage_pos[0], side_stage_pos[1], z_cmd_clear], dtype=np.float64), side, cfg
+                            )
+                            q_side_stage, _, _, _ = self.kin.solve_oriented_pinch_ik(
+                                side, side_stage_pos, act_yaw, cfg, q_seed=q_side_stage
+                            )
+                            q10_side_stage = self.kin.merge_single_arm(q10_side_air, side, q_side_stage)
+                            await self._move_and_wait(q10_side_stage, cmd_aux, 0.85, "trim_surface_lift", replace=True)
+                            await self._sleep_checked(0.15)
+                            rob_chk2 = self.client.latest_telemetry.get("robot") or {}
+                            q_arm_chk2 = rob_chk2.get("q_arm") or q_arm_chk
+                            q5_chk2 = q_arm_chk2[:5] if side == "left" else q_arm_chk2[5:10]
+                            chk_tcp, _ = self.kin.arm_fk(side, q5_chk2, tcp_off)
+                        act_clear_mm = (float(chk_tcp[2]) - (z_surface if z_surface is not None else z_table)) * 1000.0
+                    else:
+                        act_clear_mm = lift_m * 1000.0
+
+                    grasp_pos = self.kin.clamp_workspace(
+                        np.array([grasp_pos[0], grasp_pos[1], z_cmd_clear], dtype=np.float64), side, cfg
+                    )
+                    q_grasp, err_grasp, _, _ = self.kin.solve_oriented_pinch_ik(
+                        side, grasp_pos, act_yaw, cfg, q_seed=q_side_stage
+                    )
+                    self.status.planned_ik_error_mm = round(err_grasp * 1000.0, 1)
+                    q10_grasp = self.kin.merge_single_arm(q10_side_stage, side, q_grasp)
+
+                    self._set_phase(
+                        "SLIDE_INTO_CPINCH",
+                        f"{touch_hdr} 実測クリアランス +{act_clear_mm:.1f}mm を維持して親指×人差指の開口部へ水平スライド中",
+                    )
+                    q10_slide_path, _, _ = self.kin.plan_cartesian_ik_path(
+                        side, side_stage_pos, grasp_pos, act_yaw, cfg, q10_side_stage, q_seed=q_side_stage, step_m=0.0025
+                    )
+                    await self._move_path_and_wait(q10_slide_path, cmd_aux, 1.6, "glide_into_cpinch")
+                    await self._sleep_checked(0.25)
+                else:
+                    self._set_phase("DESCEND_TO_CHOCO", "対象位置へ静かに垂直下降中")
+                    await self._move_and_wait(q10_grasp, cmd_aux, 2.2, "descend_choco")
+
+                # Step 4: 親指×人差指 机面ガイド対称自己調心ピンチ (または近接センサー減速ピンチ)
+                use_tripod = cfg.use_tripod_grasp or is_surface_pinch or is_cpinch or (choco.width_mm <= 42.0)
+                use_two_finger = bool(cfg.two_finger_pinch and (is_surface_pinch or is_cpinch))
+                expected_w = float(grasp_span_mm) if (is_surface_pinch or is_cpinch) else float(choco.width_mm)
+                target_f = float(active_prof["recommended_force_N"]) if active_prof else cfg.gentle_force_N
+                prof_tag = f"（記憶『{active_prof['name']}』照合ON）" if active_prof else ""
+                finger_tag = (
+                    ("親指×人差指 机面ガイド自己調心" if use_two_finger else "親指×[人差指+中指] 3指机面ガイド把持")
+                    if is_surface_pinch
+                    else ("親指×人差指2本" if use_two_finger else "3指ピンチ")
+                )
+                self._set_phase(
+                    "GENTLE_GRASP",
+                    f"{finger_tag} → {target_f:.2f}N 優しさ把持を実行中 (対象辺 {expected_w:.0f}mm){prof_tag}",
+                )
+                await self.client.send_command(
+                    "hand_gentle_grasp",
+                    side=side,
+                    target_force_N=target_f,
+                    pre_open_amount=choco.pre_open_amount,
+                    use_tripod_only=use_tripod,
+                    two_finger_only=use_two_finger,
+                    thumb_aux=thumb_aux,
+                    expected_width_mm=expected_w,
+                    learned_profile=active_prof,
+                    posture=posture,
+                )
+                grasp_res = await self._wait_hand_grasp_settled(side, timeout_s=14.0, prox_peak=grasp_prox_peak)
+                g_snap = ((self.client.latest_telemetry.get("hands", {}).get(side) or {}).get("grasp")) or {}
+                is_verified = bool(g_snap.get("grasp_verified")) and not bool(g_snap.get("empty_close")) and grasp_res == "holding"
+                outcome["grasp_verified"] = bool(is_verified)
+                outcome["grasp_detail"] = g_snap.get("detail", "")
+                recorder.log_event("grasp_settled", grasp_res=grasp_res, verified=is_verified, detail=g_snap.get("detail", ""))
                 recorder.save_keyframe(
-                    "02_straddle_hover",
+                    "04_pinch_settled" if attempt_i == 1 else f"04_pinch_settled_try{attempt_i}",
                     stereo_pair=self.client.latest_stereo,
                     hd_tuple=self.client.latest_hd,
                     fallback_left_bgr=self.latest_left_bgr,
                 )
 
-                # 空中静止時の (1) Revo2 5指 [normal_N, tangent_N] 基準値 と (2) アーム外乱トルク tau_ext 基準値を同時計測
-                norm_s, tan_s, text_s = [], [], []
-                for _ in range(5):
-                    hands_t = self.client.latest_telemetry.get("hands") or {}
-                    f_list = (((hands_t.get(side) or {}).get("tactile") or {}).get("fingers")) or []
-                    if len(f_list) == 5:
-                        norm_s.append([float(f.get("normal_N", 0.0)) for f in f_list])
-                        tan_s.append([float(f.get("tangent_N", 0.0)) for f in f_list])
-                    rob_t = self.client.latest_telemetry.get("robot") or {}
-                    te_list = rob_t.get("tau_ext")
-                    if te_list and len(te_list) == 10:
-                        text_s.append([float(x) for x in te_list])
-                    await self._sleep_checked(0.05)
-
-                norm_base = np.median(norm_s, axis=0).tolist() if norm_s else [0.0] * 5
-                tan_base = np.median(tan_s, axis=0).tolist() if tan_s else [0.0] * 5
-                tau_ext_base = np.median(text_s, axis=0).tolist() if text_s else [0.0] * 10
-                arm_base_idx = 0 if side == "left" else 5
-                tau_ext_thresh = float(getattr(cfg, "tau_ext_contact_nm", 0.68))
-
-                # 対象真上から z_table - 22mm まで 2.5mm 刻みの完全垂直デカルト直線 IK パスを生成して ~12.4mm/s で降下
-                probe_bot_pos = self.kin.clamp_workspace(
-                    np.array([grasp_pos[0], grasp_pos[1], z_table - 0.022], dtype=np.float64),
-                    side,
-                    cfg,
-                )
-                q10_descend_path, _, max_line_dev = self.kin.plan_cartesian_ik_path(
-                    side,
-                    side_stage_pos,
-                    probe_bot_pos,
-                    act_yaw,
-                    cfg,
-                    q10_side_stage,
-                    q_seed=q_side_stage,
-                    step_m=0.0025,
-                )
-                self._set_phase(
-                    "TOUCHOFF_STRADDLE",
-                    f"対象を跨いだまま真下へ直線微速下降中 (直線偏差 {max_line_dev*1000:.2f}mm / 触覚・外乱トルク・着地監視)...",
-                )
-                await self.client.send_command(
-                    "arm_move_path",
-                    q_path=q10_descend_path,
-                    aux=cmd_aux,
-                    duration=5.4,
-                    label="touchoff_straddle",
-                    replace=True,
-                    table_z_floor=table_z_floor,
-                )
-
-                t_probe0 = time.monotonic()
-                z_surface: Optional[float] = None
-                touchdown_source = "fallback_bottom"
-                touch_info = ""
-                z_hist: List[tuple[float, float]] = []
-                q5_now = list(q_side_stage)
-                cur_z = float(side_stage_pos[2])
-                seen_touchoff = False
-                z_gate_hi = min(float(side_stage_pos[2]) - 0.014, z_table + 0.036)
-
-                while time.monotonic() - t_probe0 < 15.0:
-                    await self._sleep_checked(0.04)
-                    el_p = time.monotonic() - t_probe0
-                    rob_p = self.client.latest_telemetry.get("robot") or {}
-                    st_p = rob_p.get("stage", "")
-                    if st_p == "touchoff_straddle":
-                        seen_touchoff = True
-                    if not rob_p.get("engaged", True) or st_p in ("fault_hold", "damped_estop", "fault_stale_lowstate"):
-                        fault = rob_p.get("last_fault") or st_p or "安全ガード作動"
-                        raise RuntimeError(f"安全保護によりアームをソフトホールド停止しました ({fault})")
-
-                    q_arm_now = rob_p.get("q_arm") or q10_side_stage
-                    q5_now = list(q_arm_now[:5] if side == "left" else q_arm_now[5:10])
-                    cur_tcp, _ = self.kin.arm_fk(side, q5_now, tcp_off)
-                    cur_z = float(cur_tcp[2])
-                    z_hist.append((el_p, cur_z))
-
-                    # (A) 指先触覚センサー検知 (親指0・人差指1・中指2は高感度 0.045N、他指も安全のため 0.065N で監視)
-                    hands_p = self.client.latest_telemetry.get("hands") or {}
-                    fl_p = (((hands_p.get(side) or {}).get("tactile") or {}).get("fingers")) or []
-                    dn_pinch = dtan_pinch = dn_all = 0.0
-                    pinch_ids = (0, 1) if cfg.two_finger_pinch else (0, 1, 2)
-                    if len(fl_p) == 5:
-                        dn_pinch = max(abs(float(fl_p[i].get("normal_N", 0.0)) - norm_base[i]) for i in pinch_ids)
-                        dtan_pinch = max(abs(float(fl_p[i].get("tangent_N", 0.0)) - tan_base[i]) for i in pinch_ids)
-                        dn_all = max(abs(float(fl_p[i].get("normal_N", 0.0)) - norm_base[i]) for i in range(5))
-                    tactile_hit = (
-                        el_p >= 0.35
-                        and cur_z <= z_gate_hi
-                        and (dn_pinch >= 0.045 or dtan_pinch >= 0.055 or dn_all >= 0.065)
+                outcome["attempts"].append({
+                    "attempt": attempt_i,
+                    "grasp_xy_m": [round(float(grasp_pos[0]), 4), round(float(grasp_pos[1]), 4)],
+                    "verified": bool(is_verified),
+                    "prox_peak": [int(v) for v in grasp_prox_peak],
+                })
+                if (not is_verified) and is_surface_pinch and attempt_i < max_attempts:
+                    a_xy = self._pinch_axis_xy(side, q_grasp, tcp_off)
+                    perp_xy = np.array([-a_xy[1], a_xy[0]], dtype=np.float64)
+                    thumb_near = grasp_prox_peak[0] >= prox_thr
+                    idx_near = max(grasp_prox_peak[1], grasp_prox_peak[2]) >= prox_thr
+                    if hd_touch_ok:
+                        # カメラでは指の間にチョコがあった → 位置は動かさず、次の試行のカメラ測定に任せる
+                        shift_xy = np.zeros(2, dtype=np.float64)
+                        why = "カメラ上は位置が合っていたため同じ位置で"
+                    elif thumb_near and not idx_near:
+                        shift_xy = -a_xy * float(cfg.prox_shift_m)
+                        why = "親指だけ近接反応 → 親指側へ"
+                    elif idx_near and not thumb_near:
+                        shift_xy = a_xy * float(cfg.prox_shift_m)
+                        why = "人差指/中指だけ近接反応 → 人差指側へ"
+                    else:
+                        p = float(cfg.prox_search_perp_m)
+                        # 直交方向の探索: 1回目は +p、2回目は元の位置から -p (前回位置からは -2p)
+                        shift_xy = perp_xy * (p if search_k == 0 else -2.0 * p)
+                        search_k += 1
+                        why = "近接反応なし → 把持軸と直交方向を探索"
+                    shift_mm = float(np.hypot(shift_xy[0], shift_xy[1]) * 1000.0)
+                    self._set_phase(
+                        "PROX_RETRY",
+                        f"空振り ({attempt_i}/{max_attempts}回目)。{why} {shift_mm:.0f}mm ずらして再挑戦します",
                     )
-
-                    # (B) 外乱トルクオブザーバ検知 (|tau_ext - tau_ext_base| が肩ピッチまたは肘で閾値到達)
-                    te_now = rob_p.get("tau_ext")
-                    dtau_active = 0.0
-                    if te_now and len(te_now) == 10 and text_s:
-                        dtau_sp = abs(float(te_now[arm_base_idx + 0]) - tau_ext_base[arm_base_idx + 0])
-                        dtau_el = abs(float(te_now[arm_base_idx + 3]) - tau_ext_base[arm_base_idx + 3])
-                        dtau_active = max(dtau_sp, dtau_el)
-                    tau_ext_hit = (
-                        el_p >= 0.45
-                        and cur_z <= z_gate_hi
-                        and dtau_active >= tau_ext_thresh
+                    recorder.log_event(
+                        "prox_retry",
+                        attempt=attempt_i,
+                        reason=why,
+                        shift_mm=[round(float(shift_xy[0]) * 1000.0, 1), round(float(shift_xy[1]) * 1000.0, 1)],
+                        prox_peak=[int(v) for v in grasp_prox_peak],
                     )
-
-                    # (C) エンコーダ Z 降下ストール検知
-                    stall_hit = False
-                    if el_p >= 1.10 and st_p == "touchoff_straddle" and cur_z <= z_gate_hi:
-                        older = [z for t, z in z_hist if (el_p - t) >= 0.45]
-                        if older and (older[-1] - cur_z) < 0.0008:
-                            stall_hit = True
-
-                    if tactile_hit or tau_ext_hit or stall_hit:
-                        z_surface = cur_z
-                        if tactile_hit:
-                            touchdown_source = "tactile"
-                            trig_ja = "指先触覚"
-                        elif tau_ext_hit:
-                            touchdown_source = "tau_ext"
-                            trig_ja = "外乱トルク"
-                        else:
-                            touchdown_source = "encoder_stall"
-                            trig_ja = "着地ストール"
-                        touch_info = (
-                            f"{trig_ja} Z={z_surface*1000:.1f}mm "
-                            f"(ΔFn={dn_pinch:.2f}N, Δτ={dtau_active:.2f}Nm)"
-                        )
-                        break
-
-                    if (seen_touchoff and st_p == "holding") or (el_p >= 3.5 and st_p == "holding"):
-                        break
-
-                # +0.8mm 微小除荷を最優先で即時送信し、画像保存中の天板への押し込みをゼロにする
-                relief_m = float(getattr(cfg, "surface_relief_lift_m", 0.0008))
-                rob_g = self.client.latest_telemetry.get("robot") or {}
-                pd_trim = 0.0007 if float(rob_g.get("grav_ff_gain") or 0.0) > 0.3 else 0.0020
-                z_ref_surf = z_surface if z_surface is not None else cur_z
-                z_goal_relief = z_ref_surf + relief_m
-                z_cmd_relief = z_goal_relief + pd_trim
-
-                grasp_pos = self.kin.clamp_workspace(
-                    np.array([grasp_pos[0], grasp_pos[1], z_cmd_relief], dtype=np.float64), side, cfg
-                )
-                q_grasp, err_grasp, _, _ = self.kin.solve_oriented_pinch_ik(
-                    side, grasp_pos, act_yaw, cfg, q_seed=q5_now
-                )
-                self.status.planned_ik_error_mm = round(err_grasp * 1000.0, 1)
-                q10_grasp = self.kin.merge_single_arm(q10_side_stage, side, q_grasp)
-                touch_hdr = f"着地確定[{touch_info}]" if touch_info else f"下限到達(Z={z_ref_surf*1000:.1f}mm)"
-                self._set_phase(
-                    "SURFACE_MICRO_RELIEF",
-                    f"{touch_hdr} → +{relief_m*1000:.1f}mm 微小除荷し机面ガイド姿勢を保持中",
-                )
-                await self._move_and_wait(q10_grasp, cmd_aux, 0.75, "surface_micro_relief", replace=True)
-
-                outcome["touchdown_source"] = touchdown_source
-                outcome["z_surface_meas_m"] = round(float(z_ref_surf), 4)
-                recorder.log_event(
-                    "touchdown",
-                    source=touchdown_source,
-                    z_surface_m=outcome["z_surface_meas_m"],
-                    z_table_est_m=round(z_table, 4),
-                )
-                recorder.save_keyframe(
-                    "03_touchdown",
-                    stereo_pair=self.client.latest_stereo,
-                    hd_tuple=self.client.latest_hd,
-                    fallback_left_bgr=self.latest_left_bgr,
-                )
-                await self._sleep_checked(0.15)
-
-                # 万一押し付け残り (<-0.4mm) または浮きすぎ (>+2.4mm) があれば 1 回だけ閉ループ微調整する
-                rob_chk = self.client.latest_telemetry.get("robot") or {}
-                q_arm_chk = rob_chk.get("q_arm")
-                if q_arm_chk and len(q_arm_chk) == 10:
-                    q5_chk = q_arm_chk[:5] if side == "left" else q_arm_chk[5:10]
-                    chk_tcp, _ = self.kin.arm_fk(side, q5_chk, tcp_off)
-                    rel_h = float(chk_tcp[2]) - z_ref_surf
-                    if rel_h < -0.0004 or rel_h > 0.0024:
-                        err_z = z_goal_relief - float(chk_tcp[2])
-                        z_cmd_relief = float(np.clip(z_cmd_relief + err_z, z_ref_surf - 0.001, z_ref_surf + 0.008))
-                        grasp_pos = self.kin.clamp_workspace(
-                            np.array([grasp_pos[0], grasp_pos[1], z_cmd_relief], dtype=np.float64), side, cfg
-                        )
-                        q_grasp, _, _, _ = self.kin.solve_oriented_pinch_ik(
-                            side, grasp_pos, act_yaw, cfg, q_seed=q_grasp
-                        )
-                        q10_grasp = self.kin.merge_single_arm(q10_side_stage, side, q_grasp)
-                        await self._move_and_wait(q10_grasp, cmd_aux, 0.65, "trim_micro_relief", replace=True)
-                        await self._sleep_checked(0.12)
-
-            #   [B] 旧 c_pinch (互換維持): 対象から44mm横の天面タッチオフ → +2.0mm 浮上 → 水平スライド
-            elif is_cpinch and side_entry >= 0.004:
-                tcp_off = self.kin.active_tcp_offset(cfg, posture="c_pinch")
-                side_air_pos = self.kin.clamp_workspace(
-                    np.array([side_stage_pos[0], side_stage_pos[1], z_table + 0.036], dtype=np.float64),
-                    side,
-                    cfg,
-                )
-                q_side_air, _, _, _ = self.kin.solve_oriented_pinch_ik(
-                    side, side_air_pos, act_yaw, cfg, q_seed=q_pre
-                )
-                q10_side_air = self.kin.merge_single_arm(q10_pre, side, q_side_air)
-                self._set_phase("DESCEND_TO_CHOCO", f"対象脇({side_entry*1000:.0f}mm横) +36mm の空中へ移動し、指先触覚のゼロ点を取得中 (把持角 {act_yaw:+.0f}°)")
-                await self._move_and_wait(q10_side_air, cmd_aux, 2.0, "descend_side_air")
-                await self._sleep_checked(0.35)
-
-                norm_s, tan_s = [], []
-                for _ in range(5):
-                    hands_t = self.client.latest_telemetry.get("hands") or {}
-                    f_list = (((hands_t.get(side) or {}).get("tactile") or {}).get("fingers")) or []
-                    if len(f_list) == 5:
-                        norm_s.append([float(f.get("normal_N", 0.0)) for f in f_list])
-                        tan_s.append([float(f.get("tangent_N", 0.0)) for f in f_list])
-                    await self._sleep_checked(0.05)
-
-                norm_base = np.median(norm_s, axis=0).tolist() if norm_s else [0.0] * 5
-                tan_base = np.median(tan_s, axis=0).tolist() if tan_s else [0.0] * 5
-
-                probe_bot_pos = self.kin.clamp_workspace(
-                    np.array([side_stage_pos[0], side_stage_pos[1], z_table - 0.020], dtype=np.float64),
-                    side,
-                    cfg,
-                )
-                q_probe_bot, _, _, _ = self.kin.solve_oriented_pinch_ik(
-                    side, probe_bot_pos, act_yaw, cfg, q_seed=q_side_air
-                )
-                q10_probe_bot = self.kin.merge_single_arm(q10_side_air, side, q_probe_bot)
-                self._set_phase(
-                    "TOUCHOFF_SURFACE",
-                    "親指・人差指の触覚センサー＋エンコーダ着地検知で天面を微速探索中...",
-                )
-                await self.client.send_command(
-                    "arm_move", q=q10_probe_bot, aux=cmd_aux, duration=5.2, label="touchoff_probe", replace=True
-                )
-
-                t_probe0 = time.monotonic()
-                z_surface = None
-                touch_info = ""
-                z_hist = []
-                while time.monotonic() - t_probe0 < 6.2:
-                    await self._sleep_checked(0.04)
-                    el_p = time.monotonic() - t_probe0
-                    rob_p = self.client.latest_telemetry.get("robot") or {}
-                    st_p = rob_p.get("stage", "")
-                    if not rob_p.get("engaged", True) or st_p in ("fault_hold", "damped_estop", "fault_stale_lowstate"):
-                        fault = rob_p.get("last_fault") or st_p or "安全ガード作動"
-                        raise RuntimeError(f"安全保護によりアームをソフトホールド停止しました ({fault})")
-
-                    q_arm_now = rob_p.get("q_arm") or q10_side_air
-                    q5_now = q_arm_now[:5] if side == "left" else q_arm_now[5:10]
-                    cur_tcp, _ = self.kin.arm_fk(side, q5_now, tcp_off)
-                    cur_z = float(cur_tcp[2])
-                    z_hist.append((el_p, cur_z))
-
-                    hands_p = self.client.latest_telemetry.get("hands") or {}
-                    fl_p = (((hands_p.get(side) or {}).get("tactile") or {}).get("fingers")) or []
-                    dn_max = dtan_max = 0.0
-                    if len(fl_p) == 5:
-                        dn_max = max(abs(float(fl_p[i].get("normal_N", 0.0)) - norm_base[i]) for i in range(5))
-                        dtan_max = max(abs(float(fl_p[i].get("tangent_N", 0.0)) - tan_base[i]) for i in range(5))
-
-                    tactile_hit = (
-                        el_p >= 0.35
-                        and cur_z <= (z_table + 0.026)
-                        and (dn_max >= 0.045 or dtan_max >= 0.055)
+                    # 1) 指を開く → 2) 真上 (ホバー高さ) へ直線で逃がす → 3) 形C に開き直す
+                    try:
+                        await self.client.send_command("hand_gentle_release", side=side)
+                    except Exception:
+                        pass
+                    await self._sleep_checked(1.0)
+                    hover_z = max(float(side_stage_pos[2]), float(z_ref_surf) + float(cfg.straddle_hover_z_m))
+                    escape_pos = self.kin.clamp_workspace(
+                        np.array([grasp_pos[0], grasp_pos[1], hover_z], dtype=np.float64), side, cfg
                     )
-                    stall_hit = False
-                    if 0.90 <= el_p <= 4.75 and st_p == "touchoff_probe" and cur_z <= (z_table + 0.024):
-                        older = [z for t, z in z_hist if (el_p - t) >= 0.42]
-                        if older and (older[-1] - cur_z) < 0.0008:
-                            stall_hit = True
-
-                    if tactile_hit or stall_hit:
-                        z_surface = cur_z
-                        outcome["touchdown_source"] = "tactile" if tactile_hit else "encoder_stall"
-                        outcome["z_surface_meas_m"] = round(float(z_surface), 4)
-                        trig_src = "触覚" if tactile_hit else "着地停止"
-                        touch_info = f"{trig_src} Z={z_surface*1000:.1f}mm (ΔFn={dn_max:.2f}N, ΔFt={dtan_max:.2f}N)"
-                        break
-
-                    if el_p >= 1.8 and st_p == "holding":
-                        break
-
-                lift_m = float(getattr(cfg, "cpinch_surface_lift_m", 0.0020))
-                if z_surface is None:
-                    z_goal_actual = z_table + 0.0030
-                    touch_hdr = f"推定天面({z_table*1000:.1f}mm)"
-                else:
-                    z_goal_actual = z_surface + lift_m
-                    touch_hdr = f"天面検知[{touch_info}]"
-
-                rob_g = self.client.latest_telemetry.get("robot") or {}
-                pd_trim_c = 0.0010 if float(rob_g.get("grav_ff_gain") or 0.0) > 0.3 else 0.0032
-                z_cmd_clear = z_goal_actual + pd_trim_c
-                side_stage_pos = self.kin.clamp_workspace(
-                    np.array([side_stage_pos[0], side_stage_pos[1], z_cmd_clear], dtype=np.float64), side, cfg
-                )
-                q_side_stage, _, _, _ = self.kin.solve_oriented_pinch_ik(
-                    side, side_stage_pos, act_yaw, cfg, q_seed=q_side_air
-                )
-                q10_side_stage = self.kin.merge_single_arm(q10_side_air, side, q_side_stage)
-                self._set_phase("LIFT_FROM_SURFACE", f"{touch_hdr} → +{lift_m*1000:.1f}mm へ浮かせてクリアランス確保中")
-                await self._move_and_wait(q10_side_stage, cmd_aux, 1.1, "lift_clear_surface", replace=True)
-                await self._sleep_checked(0.20)
-
-                rob_chk = self.client.latest_telemetry.get("robot") or {}
-                q_arm_chk = rob_chk.get("q_arm")
-                if q_arm_chk and len(q_arm_chk) == 10:
-                    q5_chk = q_arm_chk[:5] if side == "left" else q_arm_chk[5:10]
-                    chk_tcp, _ = self.kin.arm_fk(side, q5_chk, tcp_off)
-                    err_z = z_goal_actual - float(chk_tcp[2])
-                    if abs(err_z) > 0.0008:
-                        z_cmd_clear = float(np.clip(z_cmd_clear + err_z, z_goal_actual - 0.004, z_goal_actual + 0.016))
-                        side_stage_pos = self.kin.clamp_workspace(
-                            np.array([side_stage_pos[0], side_stage_pos[1], z_cmd_clear], dtype=np.float64), side, cfg
-                        )
-                        q_side_stage, _, _, _ = self.kin.solve_oriented_pinch_ik(
-                            side, side_stage_pos, act_yaw, cfg, q_seed=q_side_stage
-                        )
-                        q10_side_stage = self.kin.merge_single_arm(q10_side_air, side, q_side_stage)
-                        await self._move_and_wait(q10_side_stage, cmd_aux, 0.85, "trim_surface_lift", replace=True)
-                        await self._sleep_checked(0.15)
-                        rob_chk2 = self.client.latest_telemetry.get("robot") or {}
-                        q_arm_chk2 = rob_chk2.get("q_arm") or q_arm_chk
-                        q5_chk2 = q_arm_chk2[:5] if side == "left" else q_arm_chk2[5:10]
-                        chk_tcp, _ = self.kin.arm_fk(side, q5_chk2, tcp_off)
-                    act_clear_mm = (float(chk_tcp[2]) - (z_surface if z_surface is not None else z_table)) * 1000.0
-                else:
-                    act_clear_mm = lift_m * 1000.0
-
-                grasp_pos = self.kin.clamp_workspace(
-                    np.array([grasp_pos[0], grasp_pos[1], z_cmd_clear], dtype=np.float64), side, cfg
-                )
-                q_grasp, err_grasp, _, _ = self.kin.solve_oriented_pinch_ik(
-                    side, grasp_pos, act_yaw, cfg, q_seed=q_side_stage
-                )
-                self.status.planned_ik_error_mm = round(err_grasp * 1000.0, 1)
-                q10_grasp = self.kin.merge_single_arm(q10_side_stage, side, q_grasp)
-
-                self._set_phase(
-                    "SLIDE_INTO_CPINCH",
-                    f"{touch_hdr} 実測クリアランス +{act_clear_mm:.1f}mm を維持して親指×人差指の開口部へ水平スライド中",
-                )
-                q10_slide_path, _, _ = self.kin.plan_cartesian_ik_path(
-                    side, side_stage_pos, grasp_pos, act_yaw, cfg, q10_side_stage, q_seed=q_side_stage, step_m=0.0025
-                )
-                await self._move_path_and_wait(q10_slide_path, cmd_aux, 1.6, "glide_into_cpinch")
-                await self._sleep_checked(0.25)
-            else:
-                self._set_phase("DESCEND_TO_CHOCO", "対象位置へ静かに垂直下降中")
-                await self._move_and_wait(q10_grasp, cmd_aux, 2.2, "descend_choco")
-
-            # Step 4: 親指×人差指 机面ガイド対称自己調心ピンチ (または近接センサー減速ピンチ)
-            use_tripod = cfg.use_tripod_grasp or is_surface_pinch or is_cpinch or (choco.width_mm <= 42.0)
-            use_two_finger = bool(cfg.two_finger_pinch and (is_surface_pinch or is_cpinch))
-            expected_w = float(grasp_span_mm) if (is_surface_pinch or is_cpinch) else float(choco.width_mm)
-            target_f = float(active_prof["recommended_force_N"]) if active_prof else cfg.gentle_force_N
-            prof_tag = f"（記憶『{active_prof['name']}』照合ON）" if active_prof else ""
-            finger_tag = (
-                ("親指×人差指 机面ガイド自己調心" if use_two_finger else "親指×[人差指+中指] 3指机面ガイド把持")
-                if is_surface_pinch
-                else ("親指×人差指2本" if use_two_finger else "3指ピンチ")
-            )
-            self._set_phase(
-                "GENTLE_GRASP",
-                f"{finger_tag} → {target_f:.2f}N 優しさ把持を実行中 (対象辺 {expected_w:.0f}mm){prof_tag}",
-            )
-            await self.client.send_command(
-                "hand_gentle_grasp",
-                side=side,
-                target_force_N=target_f,
-                pre_open_amount=choco.pre_open_amount,
-                use_tripod_only=use_tripod,
-                two_finger_only=use_two_finger,
-                thumb_aux=thumb_aux,
-                expected_width_mm=expected_w,
-                learned_profile=active_prof,
-                posture=posture,
-            )
-            grasp_res = await self._wait_hand_grasp_settled(side, timeout_s=14.0)
-            g_snap = ((self.client.latest_telemetry.get("hands", {}).get(side) or {}).get("grasp")) or {}
-            is_verified = bool(g_snap.get("grasp_verified")) and not bool(g_snap.get("empty_close")) and grasp_res == "holding"
-            outcome["grasp_verified"] = bool(is_verified)
-            outcome["grasp_detail"] = g_snap.get("detail", "")
-            recorder.log_event("grasp_settled", grasp_res=grasp_res, verified=is_verified, detail=g_snap.get("detail", ""))
-            recorder.save_keyframe(
-                "04_pinch_settled",
-                stereo_pair=self.client.latest_stereo,
-                hd_tuple=self.client.latest_hd,
-                fallback_left_bgr=self.latest_left_bgr,
-            )
+                    q10_up_retry, _, _ = self.kin.plan_cartesian_ik_path(
+                        side, grasp_pos, escape_pos, act_yaw, cfg, q10_grasp, q_seed=q_grasp, step_m=0.0035
+                    )
+                    await self._move_path_and_wait(q10_up_retry, cmd_aux, 1.6, "vertical_escape_retry", replace=True)
+                    await self.client.send_command(
+                        "hand_open",
+                        side=side,
+                        pre_open_amount=choco.pre_open_amount,
+                        duration_ms=2000,
+                        posture="surface_pinch",
+                        two_finger_only=bool(cfg.two_finger_pinch),
+                        thumb_aux=thumb_aux,
+                    )
+                    await self._sleep_checked(2.1)
+                    # 4) 目標位置をずらして IK を解き直し、ループ先頭 (ホバー移動) からやり直す
+                    (grasp_pos, side_stage_pos, lift_pos, q_grasp, q_side_stage,
+                     q10_side_stage, q10_grasp, err_grasp) = self._shifted_pinch_targets(
+                        side, grasp_pos, lift_pos, q_grasp, q10_pre, act_yaw, shift_xy, hover_z
+                    )
+                    self.status.planned_ik_error_mm = round(err_grasp * 1000.0, 1)
+                    continue
+                break
 
             # ★ 安全ルール: もし掴めなくても絶対に暴れず、真上直線リフト→天板干渉ゼロ経路→初期姿勢へゆっくり戻して静止する！
             if not is_verified:

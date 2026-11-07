@@ -1,0 +1,294 @@
+{
+  "recording": "choco_handover/recordings/teach_20261107_224255",
+  "what": "教師データ: 人が手で R1 右手を支え、親指を回し・中指/薬指を曲げてチョコを保持した形 (2回目の実演)",
+  "caveats": [
+    "中指・薬指はモーター位置が 49 のまま (手で曲げてもねじ送りは動かず、関節角はどのセンサーにも出ない)。曲げ角は画像で目視のみ",
+    "人が手で支えているため、圧力・近接値には人の指の接触が混ざる (手を放すとチョコが落ちる状態)",
+    "薬指の法線力は待機中から 0.28N の値が出ており、保持中の増分は +0.1N 程度"
+  ],
+  "rest_baseline": {
+    "t_rel_s": [
+      0,
+      60
+    ],
+    "samples": 588,
+    "motor_position_median": {
+      "thumb_flex": 458,
+      "thumb_rot": 400,
+      "index": 49,
+      "middle": 49,
+      "ring": 49,
+      "pinky": 50
+    },
+    "thumb_rot_range": [
+      400,
+      400
+    ],
+    "thumb_flex_range": [
+      458,
+      458
+    ],
+    "tactile": {
+      "thumb": {
+        "normal_N_median": 0.0,
+        "normal_N_max": 0.0,
+        "tangent_N_median": 0.0,
+        "tangent_N_max": 0.0,
+        "direction_deg_median": null,
+        "proximity_median": 68929
+      },
+      "index": {
+        "normal_N_median": 0.0,
+        "normal_N_max": 0.0,
+        "tangent_N_median": 0.0,
+        "tangent_N_max": 0.0,
+        "direction_deg_median": null,
+        "proximity_median": 0
+      },
+      "middle": {
+        "normal_N_median": 0.0,
+        "normal_N_max": 0.0,
+        "tangent_N_median": 0.0,
+        "tangent_N_max": 0.0,
+        "direction_deg_median": null,
+        "proximity_median": 0
+      },
+      "ring": {
+        "normal_N_median": 0.27,
+        "normal_N_max": 0.28,
+        "tangent_N_median": 0.04,
+        "tangent_N_max": 0.05,
+        "direction_deg_median": 94.0,
+        "proximity_median": 0
+      },
+      "pinky": {
+        "normal_N_median": 0.0,
+        "normal_N_max": 0.0,
+        "tangent_N_median": 0.0,
+        "tangent_N_max": 0.0,
+        "direction_deg_median": null,
+        "proximity_median": 0
+      }
+    },
+    "arm_q5_median": [
+      -0.021,
+      0.11,
+      -0.931,
+      1.264,
+      -1.451
+    ],
+    "wrist_rpy_deg": [
+      -63.5,
+      76.0,
+      -34.0
+    ],
+    "tcp_torso_m": [
+      0.078,
+      -0.148,
+      -0.288
+    ],
+    "hd_frames": [
+      "hd/224317_966.jpg",
+      "hd/224321_522.jpg",
+      "hd/224324_858.jpg",
+      "hd/224329_489.jpg",
+      "hd/224332_822.jpg",
+      "hd/224337_362.jpg",
+      "hd/224340_715.jpg",
+      "hd/224346_746.jpg",
+      "hd/224350_081.jpg",
+      "hd/224354_698.jpg"
+    ]
+  },
+  "W1_steady_90_99s": {
+    "t_rel_s": [
+      90,
+      99
+    ],
+    "samples": 88,
+    "motor_position_median": {
+      "thumb_flex": 482,
+      "thumb_rot": 730,
+      "index": 49,
+      "middle": 49,
+      "ring": 49,
+      "pinky": 50
+    },
+    "thumb_rot_range": [
+      730,
+      747
+    ],
+    "thumb_flex_range": [
+      482,
+      482
+    ],
+    "tactile": {
+      "thumb": {
+        "normal_N_median": 0.0,
+        "normal_N_max": 0.0,
+        "tangent_N_median": 0.0,
+        "tangent_N_max": 0.0,
+        "direction_deg_median": null,
+        "proximity_median": 452891
+      },
+      "index": {
+        "normal_N_median": 0.0,
+        "normal_N_max": 0.0,
+        "tangent_N_median": 0.0,
+        "tangent_N_max": 0.0,
+        "direction_deg_median": null,
+        "proximity_median": 0
+      },
+      "middle": {
+        "normal_N_median": 2.37,
+        "normal_N_max": 2.96,
+        "tangent_N_median": 5.17,
+        "tangent_N_max": 6.21,
+        "direction_deg_median": 242.0,
+        "proximity_median": 1729349
+      },
+      "ring": {
+        "normal_N_median": 0.27,
+        "normal_N_max": 0.28,
+        "tangent_N_median": 0.16,
+        "tangent_N_max": 0.17,
+        "direction_deg_median": 144.0,
+        "proximity_median": 3447
+      },
+      "pinky": {
+        "normal_N_median": 0.0,
+        "normal_N_max": 0.0,
+        "tangent_N_median": 0.0,
+        "tangent_N_max": 0.0,
+        "direction_deg_median": null,
+        "proximity_median": 14220
+      }
+    },
+    "arm_q5_median": [
+      -0.088,
+      0.088,
+      0.352,
+      0.173,
+      -1.328
+    ],
+    "wrist_rpy_deg": [
+      -73.1,
+      3.6,
+      22.0
+    ],
+    "tcp_torso_m": [
+      0.29,
+      0.007,
+      -0.035
+    ],
+    "hd_frames": [
+      "hd/224427_285.jpg",
+      "hd/224429_942.jpg",
+      "hd/224433_832.jpg"
+    ]
+  },
+  "W2_steady_115_124s": {
+    "t_rel_s": [
+      115,
+      124
+    ],
+    "samples": 88,
+    "motor_position_median": {
+      "thumb_flex": 483,
+      "thumb_rot": 699,
+      "index": 49,
+      "middle": 49,
+      "ring": 49,
+      "pinky": 50
+    },
+    "thumb_rot_range": [
+      697,
+      780
+    ],
+    "thumb_flex_range": [
+      483,
+      483
+    ],
+    "tactile": {
+      "thumb": {
+        "normal_N_median": 0.0,
+        "normal_N_max": 0.0,
+        "tangent_N_median": 0.0,
+        "tangent_N_max": 0.0,
+        "direction_deg_median": null,
+        "proximity_median": 552805
+      },
+      "index": {
+        "normal_N_median": 0.0,
+        "normal_N_max": 0.0,
+        "tangent_N_median": 0.0,
+        "tangent_N_max": 0.0,
+        "direction_deg_median": null,
+        "proximity_median": 0
+      },
+      "middle": {
+        "normal_N_median": 2.04,
+        "normal_N_max": 2.38,
+        "tangent_N_median": 4.19,
+        "tangent_N_max": 4.89,
+        "direction_deg_median": 246.0,
+        "proximity_median": 1784019
+      },
+      "ring": {
+        "normal_N_median": 0.33,
+        "normal_N_max": 0.39,
+        "tangent_N_median": 0.25,
+        "tangent_N_max": 0.35,
+        "direction_deg_median": 238.0,
+        "proximity_median": 176685
+      },
+      "pinky": {
+        "normal_N_median": 0.0,
+        "normal_N_max": 0.0,
+        "tangent_N_median": 0.0,
+        "tangent_N_max": 0.0,
+        "direction_deg_median": null,
+        "proximity_median": 255814
+      }
+    },
+    "arm_q5_median": [
+      -0.147,
+      0.039,
+      0.373,
+      0.223,
+      -1.306
+    ],
+    "wrist_rpy_deg": [
+      -75.9,
+      4.5,
+      23.6
+    ],
+    "tcp_torso_m": [
+      0.299,
+      0.004,
+      -0.039
+    ],
+    "hd_frames": [
+      "hd/224452_619.jpg",
+      "hd/224456_718.jpg"
+    ]
+  },
+  "grasp_concept": {
+    "summary": "親指の付け根を 700〜730 に回した向きで、親指と中指で主に掴み、薬指を第3点として支える (ユーザーの意図)",
+    "thumb": {
+      "rot_motor1": "700〜730",
+      "flex_motor0": "457〜483"
+    },
+    "primary_pinch": "親指 × 中指 (中指指腹: 法線 2〜3N, 接線 4〜6N, 力の向き 242〜246°)",
+    "third_support": "薬指 (チョコの回転・落下を防ぐ支え)",
+    "unused": [
+      "人差指",
+      "小指"
+    ],
+    "wrist": "手のひらがほぼ横向き (wrist roll -73〜-88°)",
+    "open_questions": [
+      "親指の付け根 700〜730 を指令で出せるか (現行コードは 435〜498 に制限)",
+      "中指・薬指の曲げ量は未計測 (手で曲げてもモーター位置は 49 のまま)。指令で合わせて数値化する必要がある"
+    ]
+  }
+}

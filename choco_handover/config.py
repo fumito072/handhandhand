@@ -51,6 +51,27 @@ class SystemConfig:
     surface_relief_lift_m: float = 0.0008  # (surface_pinch時) 着地検知後の微小除荷リフト [m] (+0.8mm: 机面ガイド維持＋摩擦最小化)
     straddle_hover_z_m: float = 0.045      # (surface_pinch時) 対象真上の垂直降下開始ホバー高さ [m] (+45mm)
     enable_waist_yaw_6dof: bool = True     # True: 腰ヨー軸 (±0.22rad) を第6自由度として併用し全方位で関節余裕を最大化
+    approach_max_speed_rad_s: float = 0.30        # 接近の空中区間 (side_clear / lift_behind_desk / swing_over_desk) の関節速度上限 [rad/s]
+    approach_final_max_speed_rad_s: float = 0.20  # チョコ斜め上空へ腕を伸ばす区間 (above_choco)。肩ピッチの重力負荷が大きいため控えめ [rad/s]
+    force_side: str = "auto"               # "auto" | "right" | "left"。Hand-Eye 補正を合わせた腕だけを使うときに固定する
+    # 近接センサー (Revo 2 指腹の静電容量近接値) による「指がチョコに乗った/触れた」判定と再試行
+    prox_object_threshold: float = 200000.0  # 実測: 空中 0〜3.5万 / 机 4〜6万 / 指同士 6〜7万 / チョコ接触 55万〜120万
+    prox_max_attempts: int = 4             # surface_pinch の下降〜把持を最大何回まで試すか (初回を含む。着地後のカメラ寄せ直しも1回と数える)
+    prox_shift_m: float = 0.018            # 指がチョコに乗ったとき、把持軸に沿って手をずらす量 [m] (開口幅のおよそ半分)
+    prox_search_perp_m: float = 0.015      # 近接反応なしで空振りしたとき、把持軸と直交方向に探す量 [m]
+    # 机面の高さを手で実測する (チョコの横の何もない机面へ指先を降ろし、触れた高さを以後の基準にする)
+    table_probe_enable: bool = True
+    table_probe_offset_m: float = 0.07     # チョコから腕の側へ離して机を触る距離 [m]
+    table_probe_high_landing_m: float = 0.006  # 実測した机より これ以上高い着地 = チョコ等に乗ったとみなす [m]
+    # HD 画像で「親指の先」と「チョコ」を同時に測り、手とチョコの相対ずれを補正する (hd_hand_servo.py)
+    hd_servo_enable: bool = True
+    hd_servo_thumb_reach_m: float = 0.030  # 検出する親指の先 (画像上の手の最下点) からピンチ中心までの距離 [m]
+    hd_servo_thumb_drop_m: float = 0.015   # ピンチ中心 (TCP) から親指の先までの高さの差 [m] (指先は TCP より下)
+    hd_servo_choco_height_m: float = 0.014 # チョコ中心を求める面の高さ (チョコの厚み) [m]
+    hd_servo_tol_mm: float = 7.0           # これ以下のずれは補正しない [mm]
+    hd_servo_along_gain: float = 0.6       # 把持軸方向のずれに掛ける係数 (推定が不確かなため控えめに動かす)
+    hd_servo_step_cap_mm: float = 45.0     # 1回の補正で動かす最大量 [mm] (残りは次の測定で詰める)
+    hd_servo_max_shift_mm: float = 90.0    # これを超えるずれは誤検出とみなす [mm]
     grav_ff_scale: float = 0.85            # URDF + Revo2 重力補償フィードフォワード係数 [0.0..1.0]
     extra_hand_mass_kg: float = 0.160      # BrainCo Revo2 + アダプタ追加質量 [kg]
     tau_ext_contact_nm: float = 0.68       # 外乱トルクオブザーバ (|tau_est - tau_grav|) による机面接触検知閾値 [Nm]

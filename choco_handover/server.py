@@ -638,5 +638,95 @@ async def ws_endpoint(ws: WebSocket):
         runtime.ws_clients.discard(ws)
 
 
+# ---- 親指×中指の把持 (tools/grasp_thumb_middle.py) をブラウザから一発で起動する ----
+from collections import deque as _deque
+import sys as _sys
+
+TM_SCRIPT = BASE_DIR / "tools" / "grasp_thumb_middle.py"
+TM_STATE = {"proc": None, "action": None, "log": _deque(maxlen=300), "started": None, "rc": None}
+
+
+async def _tm_pump(proc):
+    async for line in proc.stdout:
+        txt = line.decode("utf-8", "replace").rstrip()
+        if txt and not txt.startswith(("W0000", "I0000")):
+            TM_STATE["log"].append(txt)
+    TM_STATE["rc"] = await proc.wait()
+
+
+@app.get("/tm", response_class=HTMLResponse)
+async def tm_page():
+    return (STATIC_DIR / "tm.html").read_text(encoding="utf-8")
+
+
+@app.get("/api/tm/status")
+async def tm_status():
+    p = TM_STATE["proc"]
+    rob = (runtime.client.latest_telemetry or {}).get("robot", {}) or {}
+    pkt = runtime.latest_frame_packet or {}
+    return {
+        "running": p is not None and p.returncode is None,
+        "action": TM_STATE["action"],
+        "rc": TM_STATE["rc"],
+        "log": list(TM_STATE["log"])[-80:],
+        "battery": (rob.get("bms") or {}).get("soc"),
+        "stage": rob.get("stage"),
+        "engaged": rob.get("engaged"),
+        "r1_connected": runtime.client.connected,
+        "choco": _tm_choco_summary(pkt.get("choco")),
+        "vision_ms": pkt.get("vision_ms"),
+    }
+
+
+def _tm_choco_summary(c):
+    if not c:
+        return None
+    return {k: c.get(k) for k in ("label", "confidence", "centroid_torso_m", "yaw_deg", "reachable")}
+
+
+@app.get("/api/tm/frame.jpg")
+async def tm_frame():
+    from fastapi.responses import Response
+    pkt = runtime.latest_frame_packet or {}
+    b64 = pkt.get("rgb_b64")
+    if not b64:
+        return Response(status_code=204)
+    return Response(content=base64.b64decode(b64), media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/tm/{action}")
+async def tm_action(action: str):
+    if action == "stop":
+        # 先に腕を止めてからスクリプトを終了する (逆だと終了〜停止の間に次の指令が残る)
+        ok = True
+        try:
+            await runtime.client.send_command("arm_hold_here")
+            await runtime.client.send_command("hand_stop", side="right")
+        except Exception as exc:
+            ok = False
+            TM_STATE["log"].append(f"[停止] 指令エラー: {exc}")
+        p = TM_STATE["proc"]
+        if p is not None and p.returncode is None:
+            p.terminate()
+            TM_STATE["log"].append("[停止] 実行中のスクリプトを終了しました")
+        if ok:
+            TM_STATE["log"].append("[停止] 腕をその場で止めました（「戻す」で初期姿勢へ）")
+        return {"ok": ok}
+    if action not in ("grasp", "return", "plan"):
+        return JSONResponse({"ok": False, "error": "unknown action"}, status_code=400)
+    p = TM_STATE["proc"]
+    if p is not None and p.returncode is None:
+        return {"ok": False, "error": f"{TM_STATE['action']} を実行中です"}
+    TM_STATE["log"].clear()
+    TM_STATE.update(action=action, started=time.time(), rc=None)
+    proc = await asyncio.create_subprocess_exec(
+        _sys.executable, "-u", str(TM_SCRIPT), action,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, cwd=str(BASE_DIR.parent),
+    )
+    TM_STATE["proc"] = proc
+    asyncio.create_task(_tm_pump(proc))
+    return {"ok": True}
+
+
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8890, log_level="info")

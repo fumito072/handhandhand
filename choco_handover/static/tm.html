@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>チロルチョコ把持</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --card: #ffffff; --ink: #1d1d1f; --muted: #6b6b70; --line: #e3e1dc;
+    --go: #1f7a4d; --back: #2f5d9b; --stop: #c62828; --warn: #b26a00;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151517; --card: #1f1f22; --ink: #f2f2f2; --muted: #a0a0a6; --line: #333338; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.5 -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 16px; display: grid; gap: 14px; }
+  h1 { font-size: 20px; margin: 4px 0 0; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { background: var(--card); border: 1px solid var(--line); border-radius: 999px;
+          padding: 4px 12px; font-size: 13px; }
+  .chip b { font-weight: 600; }
+  .ok { color: var(--go); } .ng { color: var(--stop); } .wn { color: var(--warn); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+  .cam { width: 100%; border-radius: 8px; background: #000; aspect-ratio: 544 / 448; max-height: 45vh; object-fit: contain; display: block; }
+  .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  button { border: 0; border-radius: 12px; padding: 18px 10px; font-size: 20px; font-weight: 700;
+           cursor: pointer; color: #fff; }
+  button:disabled { opacity: .35; cursor: not-allowed; }
+  #grasp { background: var(--go); }
+  #ret { background: var(--back); }
+  #stop { background: var(--stop); grid-column: 1 / -1; font-size: 22px; }
+  #plan { background: transparent; color: var(--muted); border: 1px solid var(--line);
+          grid-column: 1 / -1; font-size: 14px; padding: 10px; font-weight: 500; }
+  .state { font-size: 16px; font-weight: 600; }
+  pre { margin: 0; max-height: 320px; overflow: auto; font: 12px/1.45 ui-monospace, Menlo, monospace;
+        white-space: pre-wrap; word-break: break-all; }
+  .note { font-size: 12px; color: var(--muted); margin: 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>チロルチョコ把持（親指×中指）</h1>
+  <div class="chips">
+    <span class="chip">R1 <b id="conn">…</b></span>
+    <span class="chip">バッテリー <b id="bat">…</b></span>
+    <span class="chip">腕 <b id="arm">…</b></span>
+    <span class="chip">チョコ <b id="choco">…</b></span>
+  </div>
+
+  <div class="card">
+    <div class="state" id="state">待機中</div>
+    <p class="note" id="hint">チョコを机に置いて「掴む」を押すと、初期姿勢から自動で掴んで持ち上げます。</p>
+  </div>
+
+  <div class="buttons">
+    <button id="grasp">掴む</button>
+    <button id="ret">戻す</button>
+    <button id="stop">止める</button>
+    <button id="plan">計画だけ確認（ロボットは動かない）</button>
+  </div>
+
+  <div class="card"><img id="cam" class="cam" alt="ロボットの頭部カメラ映像"></div>
+
+  <div class="card"><pre id="log"></pre></div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const LABEL = { grasp: "掴む", return: "戻す", plan: "計画確認" };
+const HINT = "チョコを机に置いて「掴む」を押すと、初期姿勢から自動で掴んで持ち上げます。";
+let lastLogLen = -1;
+
+async function post(action) {
+  const r = await fetch(`/api/tm/${action}`, { method: "POST" });
+  const j = await r.json().catch(() => ({}));
+  if (!j.ok && j.error) alert(j.error);
+  refresh();
+}
+
+$("grasp").onclick = () => {
+  if (confirm("ロボットの腕と手が動きます。周りに人がいないか確認してください。\n掴みに行きますか？")) post("grasp");
+};
+$("ret").onclick = () => {
+  if (confirm("チョコを放して腕を初期姿勢に戻します。手の下で受け取れますか？")) post("return");
+};
+$("stop").onclick = () => post("stop");
+$("plan").onclick = () => post("plan");
+
+async function refresh() {
+  let s;
+  try { s = await (await fetch("/api/tm/status")).json(); }
+  catch (e) { $("conn").textContent = "サーバ切断"; $("conn").className = "ng"; return; }
+
+  const battery = s.battery;
+  $("conn").textContent = s.r1_connected ? "接続" : "未接続";
+  $("conn").className = s.r1_connected ? "ok" : "ng";
+  $("bat").textContent = battery == null ? "—" : `${battery}%`;
+  $("bat").className = battery == null ? "" : battery <= 10 ? "ng" : battery <= 20 ? "wn" : "ok";
+  $("arm").textContent = s.engaged ? `動作中 (${s.stage})` : (s.stage || "脱力");
+  if (!s.r1_connected) {
+    $("choco").textContent = "—（ロボット未接続）"; $("choco").className = "";
+  } else if (s.choco && s.choco.centroid_torso_m) {
+    const [x, y] = s.choco.centroid_torso_m;
+    $("choco").textContent = `前 ${(x * 100).toFixed(1)}cm / 横 ${(y * 100).toFixed(1)}cm`;
+    $("choco").className = "ok";
+  } else { $("choco").textContent = "見えていない"; $("choco").className = "wn"; }
+
+  if (s.running) {
+    $("state").textContent = `${LABEL[s.action] || s.action} を実行中…`;
+  } else if (s.action) {
+    const log = s.log || [];
+    const res = s.rc === 0 ? ((log.slice(-8).join("\n").match(/result[^\n]*/) || [""])[0])
+                           : (log[log.length - 1] || "");
+    $("state").textContent = `${LABEL[s.action] || s.action} ${s.rc === 0 ? "完了" : "失敗"}: ${res}`;
+  }
+  const lowBat = battery != null && battery <= 10;
+  $("hint").textContent = lowBat ? "バッテリー10%以下のため動かせません。充電してください。"
+    : (battery != null && battery <= 15 ? "バッテリー15%以下: 指の動作が制限されることがあります。" : HINT);
+  $("grasp").disabled = s.running || !s.r1_connected || lowBat;
+  $("ret").disabled = s.running || !s.r1_connected;
+  $("plan").disabled = s.running || !s.r1_connected;
+
+  const log = s.log || [];
+  if (log.length !== lastLogLen || s.running) {
+    const el = $("log");
+    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 20;
+    el.textContent = log.join("\n");
+    if (atBottom) el.scrollTop = el.scrollHeight;
+    lastLogLen = log.length;
+  }
+}
+
+function refreshCam() { $("cam").src = `/api/tm/frame.jpg?t=${Date.now()}`; }
+setInterval(refresh, 1000);
+setInterval(refreshCam, 700);
+refresh(); refreshCam();
+</script>
+</body>
+</html>

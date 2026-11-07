@@ -1,0 +1,440 @@
+{
+  "run_id": "run_20261107_221432_surface_pinch_manual_button",
+  "run_dir": "/Users/hoshinafumito/Library/Application Support/Claude/scratch-workspaces/39235bc8-8193-4865-823c-dd784dec82c1/157612eb-d04b-4f49-9ec9-7348b3cddfd2/scratch-2026-11-07-e2de91/handhandhand/choco_handover/logs/run_20261107_221432_surface_pinch_manual_button",
+  "duration_s": 317.4,
+  "telemetry_samples": 432,
+  "events": [
+    {
+      "t_rel_s": 68.872,
+      "event": "table_probe",
+      "xy_m": [
+        0.3509,
+        -0.0197
+      ],
+      "z_touch_m": -0.0415,
+      "source": "tau_ext"
+    },
+    {
+      "t_rel_s": 76.208,
+      "event": "hd_hand_check",
+      "tag": "hover1_0",
+      "valid": true,
+      "reason": "OK",
+      "thumb_px": [
+        665,
+        397
+      ],
+      "thumb_pred_px": [
+        622,
+        385
+      ],
+      "choco_px": [
+        607,
+        359
+      ],
+      "shift_xy_m": [
+        0.0103,
+        0.0373
+      ],
+      "along_mm": 30.2,
+      "across_mm": 34.2
+    },
+    {
+      "t_rel_s": 81.145,
+      "event": "hd_hand_check",
+      "tag": "hover1_1",
+      "valid": true,
+      "reason": "OK",
+      "thumb_px": [
+        658,
+        403
+      ],
+      "thumb_pred_px": [
+        610,
+        374
+      ],
+      "choco_px": [
+        606,
+        359
+      ],
+      "shift_xy_m": [
+        0.014,
+        0.0324
+      ],
+      "along_mm": 34.4,
+      "across_mm": 28.7
+    },
+    {
+      "t_rel_s": 91.407,
+      "event": "landed_high",
+      "attempt": 1,
+      "z_surface_m": -0.0313,
+      "z_table_probe_m": -0.0415
+    },
+    {
+      "t_rel_s": 95.377,
+      "event": "touchdown",
+      "source": "encoder_stall",
+      "z_surface_m": -0.0313,
+      "z_table_est_m": -0.0415
+    },
+    {
+      "t_rel_s": 100.302,
+      "event": "hd_hand_check",
+      "tag": "touch1",
+      "valid": true,
+      "reason": "OK",
+      "thumb_px": [
+        651,
+        377
+      ],
+      "thumb_pred_px": [
+        608,
+        382
+      ],
+      "choco_px": [
+        607,
+        359
+      ],
+      "shift_xy_m": [
+        -0.0063,
+        0.0368
+      ],
+      "along_mm": -6.4,
+      "across_mm": 37.1
+    },
+    {
+      "t_rel_s": 114.793,
+      "event": "hd_hand_check",
+      "tag": "hover2_0",
+      "valid": true,
+      "reason": "OK",
+      "thumb_px": [
+        648,
+        395
+      ],
+      "thumb_pred_px": [
+        609,
+        362
+      ],
+      "choco_px": [
+        607,
+        360
+      ],
+      "shift_xy_m": [
+        0.0133,
+        0.025
+      ],
+      "along_mm": 30.0,
+      "across_mm": 21.8
+    },
+    {
+      "t_rel_s": 119.839,
+      "event": "hd_hand_check",
+      "tag": "hover2_1",
+      "valid": true,
+      "reason": "OK",
+      "thumb_px": [
+        653,
+        379
+      ],
+      "thumb_pred_px": [
+        607,
+        349
+      ],
+      "choco_px": [
+        607,
+        360
+      ],
+      "shift_xy_m": [
+        0.0047,
+        0.0333
+      ],
+      "along_mm": 14.3,
+      "across_mm": 32.5
+    },
+    {
+      "t_rel_s": 136.588,
+      "event": "touchdown",
+      "source": "fallback_bottom",
+      "z_surface_m": -0.0165,
+      "z_table_est_m": -0.0415
+    },
+    {
+      "t_rel_s": 141.678,
+      "event": "hd_hand_check",
+      "tag": "touch2",
+      "valid": true,
+      "reason": "OK",
+      "thumb_px": [
+        647,
+        364
+      ],
+      "thumb_pred_px": [
+        606,
+        365
+      ],
+      "choco_px": [
+        607,
+        360
+      ],
+      "shift_xy_m": [
+        -0.0086,
+        0.0342
+      ],
+      "along_mm": -12.5,
+      "across_mm": 34.5
+    },
+    {
+      "t_rel_s": 154.788,
+      "event": "hd_hand_check",
+      "tag": "hover3_0",
+      "valid": true,
+      "reason": "OK",
+      "thumb_px": [
+        645,
+        386
+      ],
+      "thumb_pred_px": [
+        606,
+        341
+      ],
+      "choco_px": [
+        605,
+        360
+      ],
+      "shift_xy_m": [
+        0.0141,
+        0.0266
+      ],
+      "along_mm": 29.7,
+      "across_mm": 24.3
+    },
+    {
+      "t_rel_s": 163.442,
+      "event": "hd_hand_check",
+      "tag": "hover3_1",
+      "valid": false,
+      "reason": "新しい HD フレームが来ない"
+    },
+    {
+      "t_rel_s": 175.203,
+      "event": "landed_high",
+      "attempt": 3,
+      "z_surface_m": -0.0075,
+      "z_table_probe_m": -0.0415
+    },
+    {
+      "t_rel_s": 178.581,
+      "event": "touchdown",
+      "source": "encoder_stall",
+      "z_surface_m": -0.0075,
+      "z_table_est_m": -0.0415
+    },
+    {
+      "t_rel_s": 183.704,
+      "event": "hd_hand_check",
+      "tag": "touch3",
+      "valid": true,
+      "reason": "OK",
+      "thumb_px": [
+        641,
+        365
+      ],
+      "thumb_pred_px": [
+        604,
+        353
+      ],
+      "choco_px": [
+        604,
+        360
+      ],
+      "shift_xy_m": [
+        -0.0038,
+        0.033
+      ],
+      "along_mm": -7.2,
+      "across_mm": 33.0
+    },
+    {
+      "t_rel_s": 195.945,
+      "event": "hd_hand_check",
+      "tag": "hover4_0",
+      "valid": true,
+      "reason": "OK",
+      "thumb_px": [
+        645,
+        381
+      ],
+      "thumb_pred_px": [
+        604,
+        327
+      ],
+      "choco_px": [
+        605,
+        360
+      ],
+      "shift_xy_m": [
+        0.0152,
+        0.0285
+      ],
+      "along_mm": 29.8,
+      "across_mm": 26.9
+    },
+    {
+      "t_rel_s": 200.773,
+      "event": "hd_hand_check",
+      "tag": "hover4_1",
+      "valid": true,
+      "reason": "OK",
+      "thumb_px": [
+        657,
+        350
+      ],
+      "thumb_pred_px": [
+        604,
+        312
+      ],
+      "choco_px": [
+        607,
+        360
+      ],
+      "shift_xy_m": [
+        -0.0007,
+        0.0382
+      ],
+      "along_mm": 2.4,
+      "across_mm": 38.1
+    },
+    {
+      "t_rel_s": 227.291,
+      "event": "touchdown",
+      "source": "fallback_bottom",
+      "z_surface_m": 0.0093,
+      "z_table_est_m": -0.0415
+    },
+    {
+      "t_rel_s": 231.662,
+      "event": "hd_hand_check",
+      "tag": "touch4",
+      "valid": true,
+      "reason": "OK",
+      "thumb_px": [
+        642,
+        353
+      ],
+      "thumb_pred_px": [
+        603,
+        334
+      ],
+      "choco_px": [
+        606,
+        360
+      ],
+      "shift_xy_m": [
+        -0.0039,
+        0.0319
+      ],
+      "along_mm": -7.4,
+      "across_mm": 31.9
+    },
+    {
+      "t_rel_s": 243.042,
+      "event": "grasp_settled",
+      "grasp_res": "holding",
+      "verified": false,
+      "detail": "空振り検知（ストローク上限まで触覚反応なし）"
+    }
+  ],
+  "trigger_source": "manual_button",
+  "posture": "surface_pinch",
+  "side": "right",
+  "choco_label": "tirol_choco",
+  "choco_yaw_deg": 32.2,
+  "achieved_pinch_yaw_deg": 12.5,
+  "grasp_span_mm": 32.5,
+  "xy_source": "hd_plane_ray",
+  "touchdown_source": "fallback_bottom",
+  "z_table_est_m": -0.0287,
+  "z_surface_meas_m": 0.0093,
+  "grasp_verified": false,
+  "failure_mode": "empty_close_missed_object",
+  "dry_run": false,
+  "attempts": [
+    {
+      "attempt": 1,
+      "grasp_xy_m": [
+        0.3752,
+        0.06
+      ],
+      "verified": false,
+      "hd_realign_mm": [
+        -8.9,
+        36.6
+      ],
+      "prox_peak": [
+        101823,
+        0,
+        0,
+        35693,
+        0
+      ]
+    },
+    {
+      "attempt": 2,
+      "grasp_xy_m": [
+        0.3843,
+        0.06
+      ],
+      "verified": false,
+      "hd_realign_mm": [
+        -8.6,
+        34.2
+      ],
+      "prox_peak": [
+        0,
+        0,
+        0,
+        1056,
+        0
+      ]
+    },
+    {
+      "attempt": 3,
+      "grasp_xy_m": [
+        0.3898,
+        0.06
+      ],
+      "verified": false,
+      "hd_realign_mm": [
+        -6.7,
+        33.1
+      ],
+      "prox_peak": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "attempt": 4,
+      "grasp_xy_m": [
+        0.3976,
+        0.06
+      ],
+      "verified": false,
+      "prox_peak": [
+        82223,
+        11010,
+        14850,
+        0,
+        0
+      ]
+    }
+  ],
+  "z_table_probe_m": -0.0415,
+  "grasp_detail": "空振り検知（ストローク上限まで触覚反応なし）",
+  "final_phase": "RETURNED_NOT_GRASPED"
+}

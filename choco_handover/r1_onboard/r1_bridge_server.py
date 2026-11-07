@@ -401,6 +401,9 @@ class BridgeServer:
                 payload["q"] = [float(x) for x in cmd["q"]]
             if "aux" in cmd and cmd["aux"] is not None:
                 payload["aux"] = [float(x) for x in cmd["aux"]]
+            if cmd.get("max_speed") is not None:
+                # 空中区間のみ使う関節速度上限 [rad/s]。デーモン側で 0.05〜0.30 にクランプされる
+                payload["max_speed"] = float(cmd["max_speed"])
             await self.send_arm_cmd(payload)
             return {"ok": True}
         if method == "arm_move_path":

@@ -44,7 +44,7 @@ constexpr std::array<double, 10> ARM_KD_SOFT = {3.2, 3.2, 2.5, 2.5, 1.8, 3.2, 3.
 
 // Tight torque thresholds so any unexpected contact/anomaly stops IMMEDIATELY before disturbing robot
 constexpr std::array<double, 10> TORQUE_LIMIT = {7.8, 7.8, 5.8, 5.8, 3.5, 7.8, 7.8, 5.8, 5.8, 3.5};
-constexpr double MAX_SAFE_MEASURED_DQ = 0.85; // rad/s (commanded max is 0.15 rad/s)
+constexpr double MAX_SAFE_MEASURED_DQ = 0.85; // rad/s (commanded max: 0.15 rad/s default, 0.30 rad/s for free-air segments)
 
 // Conservative URDF joint limits with safety margin
 constexpr std::array<double, 10> ARM_MIN = {
@@ -65,6 +65,8 @@ constexpr double IMU_DAMP_ROLL    = 0.20; // ~11.5 deg -> invoke loco.Damp() (ki
 constexpr double IMU_DAMP_PITCH   = 0.22; // ~12.6 deg -> invoke loco.Damp()
 
 constexpr double MAX_JOINT_SPEED_RAD_S = 0.15;
+// Upper bound for the optional per-segment "max_speed" field (free-air approach moves only).
+constexpr double MAX_FREE_AIR_SPEED_RAD_S = 0.30;
 
 std::atomic<bool> g_running{true};
 void on_signal(int) { g_running = false; }
@@ -327,6 +329,7 @@ struct Segment {
     bool has_arm = false;
     bool has_aux = false;
     double duration_s = 2.0;
+    double max_speed = MAX_JOINT_SPEED_RAD_S; // peak joint speed used for the duration floor [rad/s]
 };
 
 } // namespace
@@ -748,6 +751,10 @@ int main(int argc, char** argv) {
                 double dur = 2.0;
                 parse_double_field(line, "duration", dur);
                 seg.duration_s = std::clamp(dur, 0.40, 20.0);
+                double req_speed = 0.0;
+                if (parse_double_field(line, "max_speed", req_speed) && req_speed > 0.0) {
+                    seg.max_speed = std::clamp(req_speed, 0.05, MAX_FREE_AIR_SPEED_RAD_S);
+                }
                 std::string lbl = parse_string_field(line, "label");
                 if (!lbl.empty()) seg.label = lbl;
 
@@ -953,7 +960,7 @@ int main(int argc, char** argv) {
                             for (size_t i = 0; i < 10; ++i) max_delta = std::max(max_delta, std::abs(active_seg.arm_to[i] - seg_arm_from[i]));
                         }
                         for (size_t i = 0; i < 3; ++i) max_delta = std::max(max_delta, std::abs(active_seg.aux_to[i] - seg_aux_from[i]));
-                        double min_dur = max_delta * 1.875 / MAX_JOINT_SPEED_RAD_S;
+                        double min_dur = max_delta * 1.875 / active_seg.max_speed;
                         double dur_floor = active_seg.arm_path.empty() ? 0.60 : 0.35;
                         active_seg.duration_s = std::max(active_seg.duration_s, std::max(dur_floor, min_dur));
 

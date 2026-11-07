@@ -1,0 +1,171 @@
+{
+  "run_id": "run_20261107_214305_surface_pinch_manual_button",
+  "started_at": 1794055385.361575,
+  "started_iso": "2026-11-07T21:43:05+0900",
+  "tag": "surface_pinch_manual_button",
+  "trigger_source": "manual_button",
+  "posture": "surface_pinch",
+  "execution_mode": "grasp_and_hold",
+  "side": "right",
+  "waist_yaw_cmd": -0.0832,
+  "grav_ff_scale": 0.85,
+  "locked_choco": {
+    "label": "tirol_choco",
+    "confidence": 0.96,
+    "bbox_xyxy": [
+      284,
+      202,
+      295,
+      213
+    ],
+    "contour_px": [
+      [
+        287,
+        213
+      ],
+      [
+        284,
+        204
+      ],
+      [
+        293,
+        202
+      ],
+      [
+        295,
+        211
+      ]
+    ],
+    "mask_area_px": 62,
+    "centroid_cam_m": [
+      0.0452,
+      -0.0096,
+      0.424
+    ],
+    "centroid_torso_m": [
+      0.3584,
+      0.0298,
+      -0.0177
+    ],
+    "length_mm": 35.7,
+    "width_mm": 29.3,
+    "height_mm": 26.9,
+    "volume_cm3": 28.11,
+    "yaw_deg": 10.0,
+    "recommended_hand": "right",
+    "pre_open_amount": 10,
+    "reachable": true,
+    "ik_error_mm": 0.2,
+    "move_closer_cm": 0.0,
+    "table_z_torso_m": -0.0311,
+    "pinch_yaw_deg": 10.0,
+    "achieved_pinch_yaw_deg": 9.9,
+    "recommended_waist_yaw": 0.0,
+    "grasp_span_mm": 35.7,
+    "joint_margin_rad": 0.205,
+    "thumb_aux": 495,
+    "xy_source": "hd_plane_ray",
+    "table_bbox_torso": {
+      "x_min": 0.272,
+      "x_max": 1.077,
+      "y_min": -0.937,
+      "y_max": 0.761,
+      "z_top": -0.0339
+    },
+    "hd_used": true,
+    "hd_obb_px": [
+      [
+        620,
+        373
+      ],
+      [
+        613,
+        339
+      ],
+      [
+        647,
+        333
+      ],
+      [
+        654,
+        367
+      ]
+    ],
+    "hd_pinch_line_px": [
+      [
+        644,
+        365
+      ],
+      [
+        635,
+        321
+      ]
+    ],
+    "st_pinch_line_px": [
+      [
+        292,
+        213
+      ],
+      [
+        288,
+        201
+      ]
+    ],
+    "obb_corners_px": [
+      [
+        286,
+        217
+      ],
+      [
+        284,
+        208
+      ],
+      [
+        292,
+        206
+      ],
+      [
+        294,
+        215
+      ],
+      [
+        287,
+        213
+      ],
+      [
+        284,
+        204
+      ],
+      [
+        293,
+        202
+      ],
+      [
+        295,
+        211
+      ]
+    ],
+    "contour_3d_torso_m": [
+      [
+        0.3406,
+        0.0393,
+        -0.0118
+      ],
+      [
+        0.3641,
+        0.0487,
+        0.0037
+      ],
+      [
+        0.3693,
+        0.0206,
+        0.0071
+      ],
+      [
+        0.3486,
+        0.0135,
+        -0.0124
+      ]
+    ]
+  }
+}

@@ -17,3 +17,6 @@ choco_handover/recordings/
 calib_targets/
 calib_captures/
 choco_handover/object_profiles.json.bak
+
+# サーバーのログ (start_tm.command)
+choco_handover/logs/server_latest.log
