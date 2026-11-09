@@ -28,6 +28,7 @@ from config import BASE_DIR, ConfigStore
 from flight_recorder import summarize_benchmark_logs
 from handover_fsm import HandoverOrchestrator
 from kinematics import R1Kinematics
+from open_palm import OpenPalmDetector
 from palm_gesture import KudasaiGestureDetector, PalmGestureStatus
 from r1_client import R1BridgeClient
 from stereo_depth import StereoProcessor, StereoResult
@@ -229,6 +230,8 @@ class AppRuntime:
         self.stereo_proc = StereoProcessor()
         self.choco_perc = ChocoPerception()
         self.gesture_det = KudasaiGestureDetector()
+        self.palm_det = OpenPalmDetector()
+        self.palm_mode = False   # 手のひらへ置く動作の間はチョコ認識を止めて手の検出を速くする
         self.orchestrator = HandoverOrchestrator(self.store, self.kin, self.client)
 
         self.source_mode: str = "auto"  # "auto" | "r1_live" | "mac_webcam" | "r1_sample"
@@ -318,9 +321,13 @@ class AppRuntime:
 
                 def _process_frame():
                     st_res: StereoResult = self.stereo_proc.compute(left_bgr, right_bgr, cfg)
-                    choco, all_chocos = self.choco_perc.detect_and_extract_shape(
-                        left_bgr, st_res, self.kin, head_pitch, head_yaw, cfg, hd_bgr=hd_bgr
-                    )
+                    if self.palm_mode:
+                        choco, all_chocos = None, []
+                    else:
+                        choco, all_chocos = self.choco_perc.detect_and_extract_shape(
+                            left_bgr, st_res, self.kin, head_pitch, head_yaw, cfg, hd_bgr=hd_bgr
+                        )
+                    palms = self.palm_det.detect(hd_bgr, st_res, self.kin, head_pitch, head_yaw, cfg) if hd_bgr is not None else []
                     gest = self.gesture_det.evaluate(
                         left_bgr, st_res, self.kin, head_pitch, head_yaw, cfg
                     )
@@ -329,11 +336,17 @@ class AppRuntime:
                         vs_obs=self.orchestrator.visual_servo.last_obs,
                         hd_bgr=hd_bgr,
                     )
+                    for pm in palms:
+                        if pm.center_cam_m is not None and pm.center_cam_m[2] > 0.05:
+                            u = int(round(cfg.fx * pm.center_cam_m[0] / pm.center_cam_m[2] + cfg.cx))
+                            v = int(round(cfg.fy * pm.center_cam_m[1] / pm.center_cam_m[2] + cfg.cy))
+                            col = (80, 255, 120) if (pm.is_open and pm.palm_up) else (60, 190, 255)
+                            cv2.circle(vis_bgr, (u, v), 11, col, 2, cv2.LINE_AA)
                     _, jpg_vis = cv2.imencode(".jpg", vis_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 88])
                     _, jpg_disp = cv2.imencode(".jpg", st_res.disp_vis_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 84])
-                    return st_res, choco, gest, jpg_vis.tobytes(), jpg_disp.tobytes(), st_res.table_plane is not None
+                    return st_res, choco, gest, palms, jpg_vis.tobytes(), jpg_disp.tobytes(), st_res.table_plane is not None
 
-                st_res, choco, gest, jpg_vis, jpg_disp, has_plane = await asyncio.to_thread(_process_frame)
+                st_res, choco, gest, palms, jpg_vis, jpg_disp, has_plane = await asyncio.to_thread(_process_frame)
                 if gest.triggered_just_now:
                     self.gesture_det.reset_hold(cooldown_s=5.0)
                 self.orchestrator.update_perception(
@@ -362,6 +375,7 @@ class AppRuntime:
                     "model_error": self.choco_perc.model_error,
                     "choco": choco_dict,
                     "gesture": gest_dict,
+                    "open_palms": [{k: v for k, v in asdict(p).items() if k != "landmarks_hd"} for p in palms],
                     "task": asdict(self.orchestrator.status),
                     "tactile_memory": self.orchestrator.profile_store.snapshot(),
                     "telemetry": self.client.latest_telemetry,
@@ -428,6 +442,9 @@ async def get_status(compact: int = 1):
     if compact:
         d = {k: v for k, v in runtime.latest_frame_packet.items() if k not in ("rgb_b64", "disp_b64")}
         d["ok"] = True
+        # 認識は約 1.5 秒周期だが、腕の状態は把持の接触判定に使うので受信済みの最新値を返す
+        d["telemetry"] = runtime.client.latest_telemetry
+        d["r1_connected"] = runtime.client.connected
         return d
     return runtime.latest_frame_packet
 
@@ -643,6 +660,8 @@ from collections import deque as _deque
 import sys as _sys
 
 TM_SCRIPT = BASE_DIR / "tools" / "grasp_thumb_middle.py"
+TM_PALM_SCRIPT = BASE_DIR / "tools" / "place_on_palm.py"
+TM_PALM_ACTIONS = ("palmtest", "hovertest", "give", "auto")
 TM_STATE = {"proc": None, "action": None, "log": _deque(maxlen=300), "started": None, "rc": None}
 
 
@@ -652,6 +671,7 @@ async def _tm_pump(proc):
         if txt and not txt.startswith(("W0000", "I0000")):
             TM_STATE["log"].append(txt)
     TM_STATE["rc"] = await proc.wait()
+    runtime.palm_mode = False
 
 
 @app.get("/tm", response_class=HTMLResponse)
@@ -674,6 +694,7 @@ async def tm_status():
         "engaged": rob.get("engaged"),
         "r1_connected": runtime.client.connected,
         "choco": _tm_choco_summary(pkt.get("choco")),
+        "palms": pkt.get("open_palms") or [],
         "vision_ms": pkt.get("vision_ms"),
     }
 
@@ -712,7 +733,10 @@ async def tm_action(action: str):
         if ok:
             TM_STATE["log"].append("[停止] 腕をその場で止めました（「戻す」で初期姿勢へ）")
         return {"ok": ok}
-    if action not in ("grasp", "return", "plan"):
+    if action in ("palm_on", "palm_off"):
+        runtime.palm_mode = action == "palm_on"
+        return {"ok": True}
+    if action not in ("grasp", "return", "plan") + TM_PALM_ACTIONS:
         return JSONResponse({"ok": False, "error": "unknown action"}, status_code=400)
     p = TM_STATE["proc"]
     if p is not None and p.returncode is None:
@@ -720,7 +744,7 @@ async def tm_action(action: str):
     TM_STATE["log"].clear()
     TM_STATE.update(action=action, started=time.time(), rc=None)
     proc = await asyncio.create_subprocess_exec(
-        _sys.executable, "-u", str(TM_SCRIPT), action,
+        _sys.executable, "-u", str(TM_PALM_SCRIPT if action in TM_PALM_ACTIONS else TM_SCRIPT), action,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, cwd=str(BASE_DIR.parent),
     )
     TM_STATE["proc"] = proc

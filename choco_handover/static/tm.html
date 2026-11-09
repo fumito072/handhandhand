@@ -29,9 +29,11 @@
            cursor: pointer; color: #fff; }
   button:disabled { opacity: .35; cursor: not-allowed; }
   #grasp { background: var(--go); }
+  #auto { background: var(--go); }
+  #give { background: var(--warn); }
   #ret { background: var(--back); }
   #stop { background: var(--stop); grid-column: 1 / -1; font-size: 22px; }
-  #plan { background: transparent; color: var(--muted); border: 1px solid var(--line);
+  #plan, .sub { background: transparent; color: var(--muted); border: 1px solid var(--line);
           grid-column: 1 / -1; font-size: 14px; padding: 10px; font-weight: 500; }
   .state { font-size: 16px; font-weight: 600; }
   pre { margin: 0; max-height: 320px; overflow: auto; font: 12px/1.45 ui-monospace, Menlo, monospace;
@@ -47,6 +49,7 @@
     <span class="chip">バッテリー <b id="bat">…</b></span>
     <span class="chip">腕 <b id="arm">…</b></span>
     <span class="chip">チョコ <b id="choco">…</b></span>
+    <span class="chip">人の手 <b id="palm">…</b></span>
   </div>
 
   <div class="card">
@@ -55,10 +58,14 @@
   </div>
 
   <div class="buttons">
-    <button id="grasp">掴む</button>
+    <button id="auto">掴んで手のひらへ</button>
+    <button id="grasp">掴むだけ</button>
+    <button id="give">手のひらへ置く（持っている時）</button>
     <button id="ret">戻す</button>
     <button id="stop">止める</button>
     <button id="plan">計画だけ確認（ロボットは動かない）</button>
+    <button id="palmtest" class="sub">手の検出テスト（ロボットは動かない）</button>
+    <button id="hovertest" class="sub">手の上空まで動いて止まるテスト（持っている時）</button>
   </div>
 
   <div class="card"><img id="cam" class="cam" alt="ロボットの頭部カメラ映像"></div>
@@ -68,7 +75,7 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-const LABEL = { grasp: "掴む", return: "戻す", plan: "計画確認" };
+const LABEL = { grasp: "掴む", return: "戻す", plan: "計画確認", auto: "掴んで手のひらへ", give: "手のひらへ置く", palmtest: "手の検出テスト", hovertest: "上空テスト" };
 const HINT = "チョコを机に置いて「掴む」を押すと、初期姿勢から自動で掴んで持ち上げます。";
 let lastLogLen = -1;
 
@@ -85,6 +92,16 @@ $("grasp").onclick = () => {
 $("ret").onclick = () => {
   if (confirm("チョコを放して腕を初期姿勢に戻します。手の下で受け取れますか？")) post("return");
 };
+$("auto").onclick = () => {
+  if (confirm("チョコを掴んで持ち上げ、差し出された手のひらへ置きます。腕と手が動きます。\n周りの安全を確認しましたか？")) post("auto");
+};
+$("give").onclick = () => {
+  if (confirm("手のひらを上にして差し出すと、腕がその上へ動いてチョコを置きます。\n動かしますか？")) post("give");
+};
+$("hovertest").onclick = () => {
+  if (confirm("手のひらの上空まで腕が動いて止まります。手のひらへは降りません。\n動かしますか？")) post("hovertest");
+};
+$("palmtest").onclick = () => post("palmtest");
 $("stop").onclick = () => post("stop");
 $("plan").onclick = () => post("plan");
 
@@ -107,6 +124,16 @@ async function refresh() {
     $("choco").className = "ok";
   } else { $("choco").textContent = "見えていない"; $("choco").className = "wn"; }
 
+  const palms = s.palms || [];
+  const good = palms.filter((p) => p.is_open && p.palm_up && p.center_torso_m);
+  if (!s.r1_connected) { $("palm").textContent = "—"; $("palm").className = ""; }
+  else if (good.length) {
+    const [x, y, z] = good[0].center_torso_m;
+    $("palm").textContent = `手のひら 前${(x * 100).toFixed(0)} 横${(y * 100).toFixed(0)} 高さ${(z * 100).toFixed(0)}cm`;
+    $("palm").className = "ok";
+  } else if (palms.length) { $("palm").textContent = "手あり（開いた手のひらではない）"; $("palm").className = "wn"; }
+  else { $("palm").textContent = "なし"; $("palm").className = ""; }
+
   if (s.running) {
     $("state").textContent = `${LABEL[s.action] || s.action} を実行中…`;
   } else if (s.action) {
@@ -119,6 +146,10 @@ async function refresh() {
   $("hint").textContent = lowBat ? "バッテリー10%以下のため動かせません。充電してください。"
     : (battery != null && battery <= 15 ? "バッテリー15%以下: 指の動作が制限されることがあります。" : HINT);
   $("grasp").disabled = s.running || !s.r1_connected || lowBat;
+  $("auto").disabled = s.running || !s.r1_connected || lowBat;
+  $("give").disabled = s.running || !s.r1_connected || !s.engaged;
+  $("hovertest").disabled = s.running || !s.r1_connected || !s.engaged;
+  $("palmtest").disabled = s.running || !s.r1_connected;
   $("ret").disabled = s.running || !s.r1_connected;
   $("plan").disabled = s.running || !s.r1_connected;
 

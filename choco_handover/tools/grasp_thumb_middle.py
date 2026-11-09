@@ -33,7 +33,8 @@ from config import ConfigStore  # noqa: E402
 from kinematics import R1Kinematics  # noqa: E402
 
 SIDE = "right"
-BRIDGE = ("192.168.123.164", 8891)
+_CFG = ConfigStore().cfg
+BRIDGE = (_CFG.r1_host, _CFG.r1_port)   # 有線/Wi-Fi はサーバーの設定 (calibration.json の r1_host) に合わせる
 TEACH = PKG.parent / "docs" / "data" / "grasp_offset_teach.json"
 RUNS = PKG.parent / "docs" / "data" / "grasp_thumb_middle_runs.jsonl"
 LAST = PKG.parent / "docs" / "data" / "grasp_thumb_middle_last.json"
@@ -45,6 +46,9 @@ Q_MAX = np.array([1.80, 0.18, 1.80, 2.05, 1.85])
 SHAPE_ROTATE = [0, 720, 49, 49, 49, 49]
 SHAPE_FLEX = [470, 720, 49, 49, 49, 49]
 SHAPE_OPEN = [430, 720, 49, 200, 220, 49]   # 親指と中指のすき間をチョコ幅より広げておく (触れて押さない余裕)
+# 閉じる形は 1 つに固定する。2026-11-09 に自動で掴めた 2 回はどちらも親指を 430 のまま中指だけ閉じた形で、
+# 親指も閉じた形は同じ日に 3 回とも落とした (閉じた後の親指の近接値 84〜98万 と 17〜21万 の差)
+SHAPE_GRIP = [430, 720, 49, 360, 330, 49]
 SHAPE_CLOSE = [490, 720, 49, 340, 320, 49]
 HOVER_DZ = 0.06
 GRASP_DZ = 0.003          # 教示した高さより 3mm 上で止める (机に押し付けない)
@@ -87,7 +91,7 @@ def robot() -> dict:
     st = status()
     rob = (st.get("telemetry") or {}).get("robot")
     if not st.get("r1_connected") or not rob:
-        raise SystemExit("R1 に接続できていません（電源・LAN ケーブル・サーバーを確認してください）")
+        raise SystemExit("R1 に接続できていません（電源・ネットワーク・サーバーを確認してください）")
     return rob
 
 
@@ -215,10 +219,10 @@ def plan(kin: R1Kinematics, choco: dict) -> dict:
     s = t["samples"][-1]
     R_t = np.array(s["wrist_R"], dtype=np.float64)
     off = np.array(s["offset_in_wrist_m"], dtype=np.float64)
-    yaw_t = float(t["choco"]["yaw_deg"])
     z_c = float(t["choco"]["centroid_torso_m"][2])     # 同じ机なので高さは教示時のチョコ中心の高さを使う
     p_c = np.array([choco["centroid_torso_m"][0], choco["centroid_torso_m"][1], z_c], dtype=np.float64)
-    d_yaw = ((float(choco["yaw_deg"]) - yaw_t + 90.0) % 180.0) - 90.0
+    # 手首の向きは教示のまま固定する (チョコの向きには合わせない)。2026-11-09、手首のロールの差 7° で掴めるかどうかが変わった
+    d_yaw = 0.0
     R_star = Rotation.from_euler("z", d_yaw, degrees=True).as_matrix() @ R_t
     # はさむ点 (= チョコ中心) を厳密に合わせる。掴む姿勢から上へ順に解き、つながった関節列にする
     p_grasp = p_c + np.array([0.0, 0.0, GRASP_DZ])
@@ -247,7 +251,7 @@ def merge(kin, base_q10, q5):
 
 
 # ---------------------------------------------------------------- 実行
-def do_grasp(dry: bool) -> None:
+def do_grasp(dry: bool) -> dict | None:
     store = ConfigStore()
     store.load()
     cfg = store.cfg
@@ -259,6 +263,8 @@ def do_grasp(dry: bool) -> None:
     pl = plan(kin, choco)
     print("チョコ (ロック):", choco)
     print("計画:", json.dumps({k: v for k, v in pl.items() if k != "descent_q5"}, ensure_ascii=False))
+    if max(pl["q_grasp"][1], pl["q_hover"][1]) >= Q_MAX[1] - 0.001:
+        raise SystemExit(f"チョコが左に寄りすぎて肩の可動域の端に当たります (横 {choco['centroid_torso_m'][1] * 100:.1f}cm)。横 +4cm 以下に置いてください")
     if pl["ik_grasp_err"][0] > 4.0 or pl["ik_grasp_err"][1] > 15.0 or pl["ik_hover_err"][0] > 6.0:
         raise SystemExit(f"掴む姿勢に届きません (掴む位置 {pl['ik_grasp_err'][0]}mm・向き {pl['ik_grasp_err'][1]}° / 上空 {pl['ik_hover_err'][0]}mm)")
     if dry:
@@ -365,6 +371,10 @@ def do_grasp(dry: bool) -> None:
             print("   (注意) 実測が教示と 3cm 以上違うため使わない", flush=True)
             probe_dz = 0.0
         z_table_pinch = z_table_pinch + probe_dz
+        # 手のひらへ置く処理 (place_on_palm.py) が同じ手首の向きと高さの基準を使えるよう残す
+        saved = json.loads(LAST.read_text(encoding="utf-8"))
+        saved.update(R_star=R_star.tolist(), off=off.tolist(), z_table_pinch=z_table_pinch)
+        LAST.write_text(json.dumps(saved, ensure_ascii=False), encoding="utf-8")
         target = np.array(pl["choco_point_m"], dtype=np.float64) + np.array([0.0, 0.0, probe_dz])
         descent_q5 = [q.tolist() for q in vertical_chain(target, [0.08, 0.06, 0.045, 0.03, 0.02, 0.012, 0.006, 0.0], pl["q_hover"])]
         rec["descents"] = []
@@ -430,14 +440,9 @@ def do_grasp(dry: bool) -> None:
             up = vertical_chain(target, [0.02, 0.04, 0.06], robot()["q_arm"][5:10])
             move_path([merge(kin, q10_hover, q5) for q5 in up], aux, 3.0, "tm_abort_up")
             rec["result"] = "no_grasp_condition"
-            return
+            return rec
         print(f"[5] 握る ({mode})", flush=True)
-        if mode == "both":
-            hand(SHAPE_CLOSE, 800, 3.5)
-        elif mode == "middle_pad":     # 中指は壁としてそのまま、親指を曲げて寄せる
-            hand([510, 720, 49, SHAPE_OPEN[3], SHAPE_OPEN[4], 49], 900, 3.5)
-        else:                          # 親指は壁としてそのまま、中指を曲げて寄せる
-            hand([SHAPE_OPEN[0], 720, 49, 360, 330, 49], 900, 3.5)
+        hand(SHAPE_GRIP, 900, 3.5)
         rec["closed"] = hand_state()
         print("   閉じた後:", rec["closed"], flush=True)
 
@@ -448,7 +453,8 @@ def do_grasp(dry: bool) -> None:
         time.sleep(2.5)
         hs = hand_state()
         rec["lifted"] = hs
-        held = hs["Fn"][2] >= 0.15 or hs["Ft"][2] >= 0.30 or (hs["prox_k"][0] >= 300 and hs["prox_k"][2] >= 500)
+        # 触覚の力は何も持たなくても 0.5N ほど残ることがあるので使わない。持てていれば親指と中指の両方の近接値が高い
+        held = hs["prox_k"][0] >= 300 and hs["prox_k"][2] >= 300
         rec["result"] = "held" if held else "empty"
         print(f"[結果] {'掴めている (中指に力あり)' if held else '空振りの可能性 (中指に力なし)'}: {hs}", flush=True)
     except Exception as exc:
@@ -461,6 +467,7 @@ def do_grasp(dry: bool) -> None:
     finally:
         with RUNS.open("a", encoding="utf-8") as fp:
             fp.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    return rec
 
 
 def do_return() -> None:
