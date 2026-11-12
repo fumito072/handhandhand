@@ -15,6 +15,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 
 import cv2
@@ -163,6 +164,8 @@ class BridgeServer:
         self.host = host
         self.port = port
         self.clients = {}
+        # A bridge restart (including battery exchange) invalidates AR/head calibration.
+        self.session_id = uuid.uuid4().hex
         self.arm_proc = None
         self.robot_state = {}
         self.hands_state = {}
@@ -296,6 +299,7 @@ class BridgeServer:
                 await self.broadcast_json({
                     "type": "telemetry",
                     "t": time.time(),
+                    "bridge_session_id": self.session_id,
                     "robot": self.robot_state,
                     "hands_meta": self.revo.meta,
                     "hands": self.hands_state,
@@ -556,12 +560,14 @@ class BridgeServer:
             except Exception:
                 pass
             print(f"[bridge] Mac client disconnected: {peer}", flush=True)
-            # 全クライアント切断時は安全のためハンド・アームをソフトリリース
+            # A network loss must not start a return-to-home path through the table.
+            # Cancel finger motion and keep the currently measured arm pose.
             if not self.clients:
                 with self.hand_lock:
                     self.revo.stop_all()
                 try:
-                    await self.send_arm_cmd({"cmd": "disengage", "id": "auto_disconnect"})
+                    if self.robot_state.get("engaged") and not self.robot_state.get("last_fault"):
+                        await self.send_arm_cmd({"cmd": "hold_here", "id": "auto_disconnect"})
                 except Exception:
                     pass
 
