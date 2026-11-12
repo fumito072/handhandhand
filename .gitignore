@@ -20,3 +20,15 @@ choco_handover/object_profiles.json.bak
 
 # サーバーのログ (start_tm.command)
 choco_handover/logs/server_latest.log
+
+# 2026-11-12 の実機試行: 画像 (展示会の来場者が写っている) と大きな時系列ログは Git に入れない
+docs/data/auto_grasp_20261112/**/*.jpg
+docs/data/auto_grasp_20261112/**/*.png
+docs/data/place_test_20261112/**/*.jpg
+docs/data/teach_feet_down_20261112/*.jpg
+docs/data/pinch_thumb_index_20261112/*.jpg
+docs/data/**/telemetry.jsonl
+
+# エディタ設定・途中までのダウンロード
+.vscode/
+choco_handover/models/*.part
